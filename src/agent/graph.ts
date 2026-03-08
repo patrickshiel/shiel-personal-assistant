@@ -1,0 +1,93 @@
+/**
+ * Personal assistant agent built on LangGraph (via LangChain's createToolCallingAgent).
+ * You can replace this with a raw StateGraph for custom control flow (e.g. approval nodes).
+ */
+
+import "dotenv/config";
+
+// Enable LangSmith tracing when API key is set (traces appear in LangSmith Studio)
+if (process.env.LANGCHAIN_API_KEY) {
+  process.env.LANGCHAIN_TRACING_V2 = process.env.LANGCHAIN_TRACING_V2 ?? "true";
+  process.env.LANGCHAIN_PROJECT = process.env.LANGCHAIN_PROJECT ?? "shiel-personal-assistant";
+}
+
+import { createToolCallingAgent, AgentExecutor } from "langchain/agents";
+import { ChatPromptTemplate, MessagesPlaceholder } from "@langchain/core/prompts";
+import { ChatOpenAI } from "@langchain/openai";
+import { assistantTools } from "./tools.js";
+
+const model = new ChatOpenAI({
+  model: "gpt-4o-mini",
+  temperature: 0,
+});
+
+const DEFAULT_SYSTEM_PROMPT = `You are a personal assistant that organises the user's whole life. You manage two contexts:
+- **Personal** (patrick@shiel.io): personal calendar, tasks, notes, email.
+- **Work** (patrick@xwave.ie): work calendar, tasks, notes, email.
+
+When using tools, pass context: "personal" or "work" so the right account is used. For a full picture (e.g. "what's on today"), call calendar and tasks for BOTH contexts and present a unified view, clearly labelling which items are personal vs work.
+
+You have access to:
+- Calendar: list/create/update/delete events (context = personal or work).
+- Todoist: list projects and tasks, add/update/complete (context = personal or work).
+- Obsidian: list, read, write, search notes (context = personal or work; use Personal/ and Work/ folders or separate vaults).
+- Email: list, read, draft replies (when implemented).
+- save_memory: persist preferences and facts for future runs.
+
+Be concise. Respect the user's privacy. When creating events or sending email, prefer confirmation for high-impact actions.`;
+
+function buildPrompt(systemPrompt: string) {
+  return ChatPromptTemplate.fromMessages([
+    ["system", systemPrompt],
+    new MessagesPlaceholder("chat_history"),
+    ["human", "{input}"],
+    new MessagesPlaceholder("agent_scratchpad"),
+  ]);
+}
+
+function createExecutor(systemPrompt: string) {
+  const prompt = buildPrompt(systemPrompt);
+  const agent = createToolCallingAgent({ llm: model, tools: assistantTools, prompt });
+  return AgentExecutor.fromAgentAndTools({
+    agent,
+    tools: assistantTools,
+    maxIterations: 15,
+    returnIntermediateSteps: false,
+  });
+}
+
+export const assistantExecutor = createExecutor(DEFAULT_SYSTEM_PROMPT);
+
+/**
+ * Run the assistant with a single user message (default prompt).
+ */
+export async function runAssistant(userMessage: string) {
+  const result = await assistantExecutor.invoke({
+    input: userMessage,
+    chat_history: [],
+  });
+  return result;
+}
+
+/**
+ * Run the assistant with a custom system prompt (for orchestration triggers).
+ * Optional memoryContext is injected into the system prompt so the agent has long-term context.
+ */
+export async function runWithPrompt(
+  systemPrompt: string,
+  userMessage: string,
+  options?: { memoryContext?: string; lastRunContext?: string }
+) {
+  let fullSystem = systemPrompt;
+  if (options?.memoryContext) {
+    fullSystem = `${systemPrompt}\n\n${options.memoryContext}`;
+  }
+  if (options?.lastRunContext) {
+    fullSystem = `${fullSystem}\n\n${options.lastRunContext}`;
+  }
+  const executor = createExecutor(fullSystem);
+  return executor.invoke({
+    input: userMessage,
+    chat_history: [],
+  });
+}
