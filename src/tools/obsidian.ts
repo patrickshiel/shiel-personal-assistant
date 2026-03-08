@@ -29,6 +29,15 @@ function validateVaultPath(vaultPath: string, context: "personal" | "work"): str
   return null;
 }
 
+/** When context is personal, prefix path with "Personal/" so all personal notes live under that folder. */
+function prefixPersonalPath(context: Context | undefined, relativePath: string): string {
+  if (context !== "personal") return relativePath;
+  const normalized = relativePath.replace(/^\.\/+/, "").trim();
+  if (!normalized) return "Personal";
+  if (normalized.startsWith("Personal/") || normalized.startsWith("Personal\\")) return relativePath;
+  return "Personal/" + normalized;
+}
+
 function resolveVaultPath(relativePath: string, basePath: string): string {
   const normalized = path.normalize(relativePath).replace(/^(\.\.(\/|\\))+/g, "");
   const full = path.resolve(basePath, normalized);
@@ -85,7 +94,7 @@ export async function listNotes(input: ListNotesInput): Promise<string> {
   const placeholderErr = validateVaultPath(vaultPath, ctx);
   if (placeholderErr) return JSON.stringify({ error: placeholderErr });
   try {
-    const folder = input.folder ?? "";
+    const folder = prefixPersonalPath(getContext(input), input.folder ?? "");
     const ext = input.extension ?? ".md";
     const dir = resolveVaultPath(folder, vaultPath);
     const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -105,7 +114,8 @@ export async function readNote(input: ReadNoteInput): Promise<string> {
   const placeholderErr = validateVaultPath(vaultPath, ctx);
   if (placeholderErr) return JSON.stringify({ error: placeholderErr });
   try {
-    const full = resolveVaultPath(input.relativePath, vaultPath);
+    const relPath = prefixPersonalPath(ctx, input.relativePath);
+    const full = resolveVaultPath(relPath, vaultPath);
     const raw = await fs.readFile(full, "utf-8");
     const { data, content } = matter(raw);
     return JSON.stringify({ context: getContext(input) ?? "personal", frontmatter: data, content });
@@ -124,13 +134,14 @@ export async function writeNote(input: WriteNoteInput): Promise<string> {
   const placeholderErr = validateVaultPath(vaultPath, ctx);
   if (placeholderErr) return JSON.stringify({ error: placeholderErr });
   try {
-    const full = resolveVaultPath(input.relativePath, vaultPath);
+    const relPath = prefixPersonalPath(ctx, input.relativePath);
+    const full = resolveVaultPath(relPath, vaultPath);
     await fs.mkdir(path.dirname(full), { recursive: true });
     const body = input.frontmatter
       ? matter.stringify(input.content, input.frontmatter)
       : input.content;
     await fs.writeFile(full, body, "utf-8");
-    return JSON.stringify({ success: true, context: ctx, path: input.relativePath });
+    return JSON.stringify({ success: true, context: ctx, path: relPath });
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err?.code === "EACCES" || err?.code === "EPERM") {
@@ -150,7 +161,8 @@ export async function appendToNote(input: AppendToNoteInput): Promise<string> {
   const placeholderErr = validateVaultPath(vaultPath, ctx);
   if (placeholderErr) return JSON.stringify({ error: placeholderErr });
   try {
-    const full = resolveVaultPath(input.relativePath, vaultPath);
+    const relPath = prefixPersonalPath(ctx, input.relativePath);
+    const full = resolveVaultPath(relPath, vaultPath);
     await fs.appendFile(full, "\n" + input.content, "utf-8");
     return JSON.stringify({ success: true });
   } catch (e) {
@@ -170,7 +182,8 @@ export async function searchNotes(input: SearchNotesInput): Promise<string> {
   const placeholderErr = validateVaultPath(vaultPath, ctx);
   if (placeholderErr) return JSON.stringify({ error: placeholderErr });
   try {
-    const dir = resolveVaultPath(input.folder ?? "", vaultPath);
+    const folder = prefixPersonalPath(getContext(input), input.folder ?? "");
+    const dir = resolveVaultPath(folder, vaultPath);
     const entries = await fs.readdir(dir, { withFileTypes: true, recursive: true });
     const results: { path: string; snippet: string }[] = [];
     const q = input.query.toLowerCase();

@@ -97,29 +97,42 @@ export async function listTasks(input: ListTasksInput): Promise<string> {
   }
 }
 
+const PERSONAL_PREFIX = "Personal: ";
+
+function ensurePersonalPrefix(context: Context | undefined, content: string): string {
+  if (context !== "personal") return content;
+  const c = content.trim();
+  return c.startsWith(PERSONAL_PREFIX) ? c : PERSONAL_PREFIX + c;
+}
+
 export async function addTask(input: AddTaskInput): Promise<string> {
-  const token = getToken(getContext(input) ?? "personal");
+  const ctx = getContext(input) ?? "personal";
+  const token = getToken(ctx);
   if (!token) return JSON.stringify({ error: "Todoist not configured." });
   try {
+    const content = ensurePersonalPrefix(ctx, input.content.trim());
     const task = await todoistApi.addTask(token, {
-      content: input.content,
+      content,
       project_id: input.projectId ?? undefined,
       due_string: input.dueString ?? undefined,
       priority: input.priority ?? undefined,
       description: input.description ?? undefined,
     });
-    return JSON.stringify({ context: getContext(input) ?? "personal", ...(task as object) });
+    return JSON.stringify({ context: ctx, ...(task as object) });
   } catch (e) {
     return JSON.stringify({ error: formatTodoistError(e) });
   }
 }
 
 export async function updateTask(input: UpdateTaskInput): Promise<string> {
-  const token = getToken(getContext(input) ?? "personal");
+  const ctx = getContext(input) ?? "personal";
+  const token = getToken(ctx);
   if (!token) return JSON.stringify({ error: "Todoist not configured." });
   try {
+    const content =
+      input.content != null ? ensurePersonalPrefix(ctx, input.content) : undefined;
     await todoistApi.updateTask(token, input.taskId, {
-      content: input.content ?? undefined,
+      content,
       due_string: input.dueString ?? undefined,
       priority: input.priority ?? undefined,
     });

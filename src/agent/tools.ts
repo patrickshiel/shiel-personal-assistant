@@ -60,7 +60,7 @@ export const todoistAddTask = tool(
   async (input: z.infer<typeof todoist.addTaskSchema>) => todoist.addTask(input),
   {
     name: "todoist_add_task",
-    description: "Add a task to Todoist. Use descriptive content (title); for prep/meeting tasks always set description and dueString to a specific date and time (e.g. '2025-11-12 09:00'). Optional: projectId, priority 1-4.",
+    description: "Add a task to Todoist. For prep/meeting tasks: start content with the task's due date and time (same as dueString), e.g. '2025-03-12 09:00 - Prepare slide deck for...', so titles sort by when to do the task; always set description and dueString. Optional: projectId, priority 1-4.",
     schema: todoist.addTaskSchema,
   }
 );

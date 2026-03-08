@@ -78,6 +78,7 @@ export async function listEvents(input: ListEventsInput): Promise<string> {
       maxResults: input.maxResults ?? 20,
       singleEvents: true,
       orderBy: "startTime",
+      showHiddenInvitations: true, // include events not yet accepted (tentative, needsAction) so prep isn't missed
     });
     const events = (res.data.items ?? []).map((e) => ({
       context: ctx ?? "personal",

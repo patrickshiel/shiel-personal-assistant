@@ -16,8 +16,10 @@ import { ChatPromptTemplate, MessagesPlaceholder } from "@langchain/core/prompts
 import { ChatOpenAI } from "@langchain/openai";
 import { assistantTools } from "./tools.js";
 
+const OPENAI_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
+
 const model = new ChatOpenAI({
-  model: "gpt-4o-mini",
+  model: OPENAI_MODEL,
   temperature: 0,
 });
 

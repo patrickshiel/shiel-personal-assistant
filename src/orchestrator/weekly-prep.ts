@@ -42,16 +42,19 @@ ${output}
 
 ---
 
-## Your prep tasks (edit below)
+## Your prep tasks (edit below, optional)
 
-For each meeting that needs preparation, add a line in this format:
-- **Meeting title or date/time**: Prep task 1, Prep task 2, ...
+**One prep task per meeting**: When you apply, the assistant creates **one** Todoist task per meeting. All prep items for that meeting go inside that single task as a checklist in the description. The task is due at a time that gives you enough time before the meeting to complete the list.
+
+**Work meetings**: Every work meeting gets one prep task (with default checklist if you don't add a line). To customize the checklist for a meeting, add a line below.
+
+Format: **Meeting title or date/time**: Checklist item 1, Checklist item 2, ...
 
 Example:
 - **Standup Mon 9am**: Review sprint board, note blockers
-- **Client call Wed 2pm**: Prepare deck, send agenda
+- **Client call Wed 2pm**: Prepare slide deck for readout, send agenda to attendees
 
-When you apply, the assistant will add Todoist tasks and optionally calendar blocks. For **work** meetings, it will create Obsidian notes for complex prep (outlines/key questions). For **personal** meetings, it only creates notes for items you mark as important (e.g. add * or "important" in the task).
+**Personal meetings**: Add a line only for personal meetings you want one prep task for (e.g. interview, medical).
 
 Save this file, then run: npm run weekly-prep -- --apply ${filename}
 `;
@@ -99,25 +102,26 @@ export async function runWeeklyPrepApply(prepFilePath: string): Promise<void> {
     : path.join(STATE_DIR, prepFilePath);
   const content = await fs.readFile(fullPath, "utf-8");
   const entries = parsePrepTasks(content);
-  if (entries.length === 0) {
-    console.log("No prep tasks found in the file. Use the format under 'Your prep tasks'.");
-    return;
-  }
 
   const trigger = getTrigger("weekly_meeting_prep");
   const { start, end } = nextSevenDaysRange(new Date());
-  const input = `Apply the following prep tasks. Date range for this week: ${start} to ${end} (use timeMin ${start}T00:00:00Z and timeMax ${end}T23:59:59Z).
+  const prepList =
+    entries.length > 0
+      ? `\nUser's custom prep entries (use these as the checklist items for the one prep task per meeting; for other work meetings use default checklist):\n${entries.map((e) => `- ${e.meeting}: ${e.tasks.join("; ")}`).join("\n")}`
+      : "\nUser listed no custom prep. Create one prep task per work meeting with a default checklist (e.g. Review agenda and materials, Prepare notes) in the task description. For personal meetings do not create tasks unless the user added them (in this run they did not).";
 
-First, call calendar_list_events_both with that timeMin/timeMax so you have full event details (title, start, end, description, attendees, link) for each meeting. Then:
+  const input = `Apply weekly meeting prep. Date range: ${start} to ${end} (use timeMin ${start}T00:00:00Z and timeMax ${end}T23:59:59Z).
 
-1. **Todoist**: For each prep task create a task with: (a) **Descriptive title**—include the meeting name or outcome (e.g. "Prepare slide deck for HSE Insights Audit Readout", not "Prepare deck"). (b) **Description**—always set it: meeting title, meeting date/time, and a short note on what the prep is for. (c) **Due date and time**—use a specific datetime before the meeting (e.g. "2025-11-12 09:00" for a meeting at 14:00), not just the day. Before adding, list existing tasks and do not create duplicates.
-2. **Calendar**: Optionally create focus blocks for prep; list events first and do not duplicate existing focus blocks.
-3. **Obsidian**: For each meeting that needs a prep note, include a "## Meeting context" section with the full calendar event (title, date/time, description, attendees, link). If the note already exists (check with obsidian_read_note), use obsidian_append_to_note to add a "## Prep update YYYY-MM-DD" section. If it does not exist, use obsidian_write_note with Meeting context first, then outline and key questions.
+First, call calendar_list_events_both to get all meetings (the list includes every event on work and personal calendars, including ones the user has not yet accepted—do not skip any). Then:
+- **One prep task per meeting**: Create exactly **one** Todoist task per meeting. Put all prep items (checklist) in that task's **description**—do not create separate tasks per item. If the user listed items for a meeting below, use those as the checklist; otherwise use a default (Review agenda and materials, Prepare notes).
+- **Due time**: Set the task's due date and time so the user has **enough time before the meeting** to complete all prep—e.g. 60–90 minutes or 2 hours before the meeting start, depending on how many checklist items there are.
+- **Personal meetings**: Only create one prep task per meeting if the user listed that meeting below.
+1. **Todoist**: One task per meeting. Title format: "YYYY-MM-DD HH:MM - Prep for [Meeting title]" (datetime = due time). Description: meeting name and time, then "Prep checklist:" with each item on its own line (detailed and specific). due_string = start of the prep block (enough time before the meeting). List existing tasks first and avoid duplicates.
+2. **Obsidian**: Create **one prep note per meeting**—for every meeting that gets a Todoist prep task, also create or update the corresponding Obsidian note (work vault for work meetings, personal vault for personal). Do not skip: Todoist task and Obsidian note go together. Note title: meeting's start date/time at the start, e.g. "Meetings/2025-03-12 14:00 - Prep - Client call.md". Include "## Meeting context" and "## Prep checklist" (same items as in the Todoist task). When appending, keep the existing note path; add a "## Prep update YYYY-MM-DD HH:MM" section.
+3. **Calendar**: Optionally create focus blocks; list events first and do not duplicate.
+${prepList}
 
-Prep entries (meeting → tasks):
-${entries.map((e) => `- ${e.meeting}: ${e.tasks.join("; ")}`).join("\n")}
-
-Synthesise and create Todoist tasks, calendar blocks where useful, and Obsidian notes with full meeting context. Re-running apply should update existing notes by appending and avoid duplicate tasks or events.`;
+Synthesise and create Todoist tasks, calendar blocks where useful, and Obsidian notes. Re-running apply should be idempotent (append notes, no duplicate tasks or events).`;
   const result = await runWithPrompt(trigger.systemPrompt, input);
   const output = result?.output ?? result?.output_text ?? "";
   console.log(output);
