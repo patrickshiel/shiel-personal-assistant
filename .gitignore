@@ -1,6 +1,21 @@
+# Dependencies and build output
 node_modules/
+**/node_modules/
 dist/
+**/dist/
+backend/dist/
+frontend/.next/
+frontend/out/
+*.tsbuildinfo
+
+# Environment and secrets
 .env
+.env.*
+!.env.example
+
+# Logs and OS
 *.log
 .DS_Store
+
+# App state
 state/
