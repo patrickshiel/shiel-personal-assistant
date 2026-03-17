@@ -57,34 +57,44 @@ const backendUrl =
 
 const PRIORITY_LABELS: Record<number, string> = { 1: "Normal", 2: "Medium", 3: "High", 4: "Urgent" };
 
-/** Format due for display: date + time when available, else date only (optionally note no time). */
+/** Format due for display: weekday (3-letter) + date + time when available, else date only (no time). */
 function formatDueForDisplay(task: TaskItem): string {
   const due = task.due;
   const dateStr = due?.date ?? task.due_string ?? "";
   if (!dateStr) return "—";
+  const dateOnly = dateStr.slice(0, 10);
+  const optsDateShort: Intl.DateTimeFormatOptions = { weekday: "short", year: "numeric", month: "numeric", day: "numeric" };
+  const optsDateTimeShort: Intl.DateTimeFormatOptions = { weekday: "short", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" };
+
   const datetime = due && "datetime" in due ? (due as { datetime?: string }).datetime : undefined;
   if (datetime) {
     try {
       const d = new Date(datetime);
-      if (!Number.isNaN(d.getTime())) return d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+      if (!Number.isNaN(d.getTime())) return d.toLocaleString(undefined, optsDateTimeShort);
     } catch {
-      return `${dateStr.slice(0, 10)} ${String(datetime).slice(11, 16)}`;
+      const d = new Date(dateOnly + "T12:00:00");
+      return `${d.toLocaleDateString(undefined, { weekday: "short" })} ${dateOnly} ${String(datetime).slice(11, 16)}`;
     }
   }
-  // Fallback: parse due_string (or date string) when it contains a time (e.g. "2026-03-18 14:00" or ISO)
   const strToParse = task.due_string ?? dateStr;
   const hasTimeInString =
     /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(strToParse) || /\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}/.test(strToParse);
   if (hasTimeInString) {
     try {
       const d = new Date(strToParse);
-      if (!Number.isNaN(d.getTime())) return d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+      if (!Number.isNaN(d.getTime())) return d.toLocaleString(undefined, optsDateTimeShort);
     } catch {
       // fall through to date only
     }
   }
-  const dateOnly = dateStr.slice(0, 10);
-  return dateOnly ? `${dateOnly} (no time)` : dateStr;
+  if (dateOnly) {
+    const d = new Date(dateOnly + "T12:00:00");
+    if (!Number.isNaN(d.getTime())) {
+      return `${d.toLocaleDateString(undefined, optsDateShort)} (no time)`;
+    }
+    return `${dateOnly} (no time)`;
+  }
+  return dateStr;
 }
 
 function dueDateOnly(task: TaskItem): string {
@@ -93,39 +103,89 @@ function dueDateOnly(task: TaskItem): string {
   return d.slice(0, 10);
 }
 
+/** Sortable ISO-like string for a task's due date+time (for ordering). No time = end of day. */
+function dueSortKey(task: TaskItem): string {
+  const due = task.due;
+  const dateStr = due?.date ?? task.due_string ?? "";
+  if (!dateStr) return "9999-12-31T23:59:59.999";
+  const dateOnly = dateStr.slice(0, 10);
+  const datetime = due && "datetime" in due ? (due as { datetime?: string }).datetime : undefined;
+  if (datetime) {
+    try {
+      const d = new Date(datetime);
+      if (!Number.isNaN(d.getTime())) return d.toISOString();
+    } catch {
+      // fall through
+    }
+  }
+  const strToParse = task.due_string ?? dateStr;
+  const hasTime =
+    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(strToParse) || /\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}/.test(strToParse);
+  if (hasTime) {
+    try {
+      const d = new Date(strToParse);
+      if (!Number.isNaN(d.getTime())) return d.toISOString();
+    } catch {
+      // fall through
+    }
+  }
+  return `${dateOnly}T23:59:59.999`;
+}
+
+function compareTasksByDue(a: TaskItem, b: TaskItem): number {
+  return dueSortKey(a).localeCompare(dueSortKey(b));
+}
+
+/** Format a date for task group headers (e.g. "Mon, 17 Mar 2026"). */
+function formatGroupHeaderDate(d: Date): string {
+  return d.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+}
+
+/** End of current week (Sunday) as YYYY-MM-DD. */
+function endOfThisWeekStr(): string {
+  const d = new Date();
+  const daysUntilSunday = (7 - d.getDay()) % 7;
+  d.setDate(d.getDate() + daysUntilSunday);
+  return d.toISOString().slice(0, 10);
+}
+
 function splitUpcoming(upcoming: TaskItem[]): {
-  nextThreeDays: TaskItem[];
-  greaterThanThreeDays: TaskItem[];
+  tomorrow: TaskItem[];
+  thisWeek: TaskItem[];
+  future: TaskItem[];
 } {
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
-  const end = new Date(today);
-  end.setDate(end.getDate() + 3);
-  const nextThreeDaysEnd = end.toISOString().slice(0, 10);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+  const endOfWeek = endOfThisWeekStr();
 
-  const nextThreeDays: TaskItem[] = [];
-  const greaterThanThreeDays: TaskItem[] = [];
+  const tomorrowTasks: TaskItem[] = [];
+  const thisWeekTasks: TaskItem[] = [];
+  const futureTasks: TaskItem[] = [];
 
   for (const task of upcoming) {
     const due = dueDateOnly(task);
     if (!due) {
-      greaterThanThreeDays.push(task);
+      futureTasks.push(task);
       continue;
     }
-    if (due <= nextThreeDaysEnd) nextThreeDays.push(task);
-    else greaterThanThreeDays.push(task);
+    if (due === tomorrowStr) tomorrowTasks.push(task);
+    else if (due > tomorrowStr && due <= endOfWeek) thisWeekTasks.push(task);
+    else futureTasks.push(task);
   }
 
-  const byDue = (a: TaskItem, b: TaskItem) =>
-    dueDateOnly(a).localeCompare(dueDateOnly(b));
-  nextThreeDays.sort(byDue);
-  greaterThanThreeDays.sort(byDue);
+  tomorrowTasks.sort(compareTasksByDue);
+  thisWeekTasks.sort(compareTasksByDue);
+  futureTasks.sort(compareTasksByDue);
 
-  return { nextThreeDays, greaterThanThreeDays };
+  return { tomorrow: tomorrowTasks, thisWeek: thisWeekTasks, future: futureTasks };
 }
 
 function TasksSection({
   title,
+  dateBadge,
   count,
   tasks,
   defaultOpen = true,
@@ -134,6 +194,7 @@ function TasksSection({
   renderTaskRow,
 }: {
   title: string;
+  dateBadge?: string;
   count: number;
   tasks: TaskItem[];
   defaultOpen?: boolean;
@@ -142,28 +203,32 @@ function TasksSection({
   renderTaskRow: (task: TaskItem) => ReactNode;
 }) {
   return (
-    <div className="flex min-h-0 flex-col overflow-hidden">
+    <div className="flex shrink-0 flex-col overflow-hidden">
       <Collapsible
         defaultOpen={defaultOpen}
         {...(open !== undefined && onOpenChange ? { open, onOpenChange } : {})}
-        className="flex h-full min-h-0 flex-col"
+        className="flex flex-col"
       >
         <CollapsibleTrigger className="group flex shrink-0 items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 text-left text-sm font-medium hover:bg-muted/80">
           <ChevronDownIcon className="size-4 shrink-0 hidden group-data-[panel-open]:block" />
           <ChevronRightIcon className="size-4 shrink-0 block group-data-[panel-open]:hidden" />
-          {title} ({count})
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span>{title}</span>
+            {dateBadge ? (
+              <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] font-normal">
+                {dateBadge}
+              </Badge>
+            ) : null}
+            <span className="text-muted-foreground">({count})</span>
+          </span>
         </CollapsibleTrigger>
-        <CollapsibleContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <ScrollArea className="h-full min-h-[60px]">
-              <div className="space-y-1.5 p-1.5">
-                {tasks.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">None</p>
-                ) : (
-                  tasks.map(renderTaskRow)
-                )}
-              </div>
-            </ScrollArea>
+        <CollapsibleContent className="flex flex-col overflow-hidden">
+          <div className="space-y-1.5 p-1.5">
+            {tasks.length === 0 ? (
+              <p className="text-xs text-muted-foreground">None</p>
+            ) : (
+              tasks.map(renderTaskRow)
+            )}
           </div>
         </CollapsibleContent>
       </Collapsible>
@@ -250,7 +315,7 @@ export default function HomePage() {
   const [refineRunning, setRefineRunning] = useState(false);
   const [refineProposals, setRefineProposals] = useState<Proposal[]>([]);
   const [refineStreamingContent, setRefineStreamingContent] = useState("");
-  const [greaterThanThreeDaysOpen, setGreaterThanThreeDaysOpen] = useState(false);
+  const [futureOpen, setFutureOpen] = useState(false);
 
   const [chatInput, setChatInput] = useState("");
   const [chatOutput, setChatOutput] = useState("");
@@ -642,15 +707,23 @@ export default function HomePage() {
   };
 
   return (
-    <div className={cn(activeTab === "tasks" ? "mx-auto w-full max-w-7xl px-4" : "container")}>
-      <Tabs value={activeTab} onValueChange={(v) => v != null && setActiveTab(v)} className="w-full">
-        <TabsList variant="line" className="mb-5 w-fit">
+    <div
+      className={cn(
+        activeTab === "tasks" ? "mx-auto flex h-screen max-w-7xl flex-col overflow-hidden px-4" : "container"
+      )}
+    >
+      <Tabs
+        value={activeTab}
+        onValueChange={(v) => v != null && setActiveTab(v)}
+        className={cn("w-full", activeTab === "tasks" && "flex min-h-0 flex-1 flex-col")}
+      >
+        <TabsList variant="line" className="mb-5 w-fit shrink-0">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="tasks">Tasks</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="tasks" className="mt-0 h-[calc(100vh-8rem)]">
-          <div className="grid h-full gap-4 md:grid-cols-[1fr_2fr]">
+        <TabsContent value="tasks" className="mt-0 min-h-0 flex-1 overflow-hidden flex flex-col">
+          <div className="grid min-h-0 flex-1 gap-4 md:grid-cols-[1fr_2fr]">
             <Card className="flex h-full min-h-0 flex-col">
               <CardHeader className="shrink-0">
                 <div className="flex items-center gap-2">
@@ -678,23 +751,39 @@ export default function HomePage() {
                 </div>
                 {!tasksLoading && tasksData && !tasksData.error ? (
                   (() => {
-                    const { nextThreeDays, greaterThanThreeDays } = splitUpcoming(tasksData.upcoming);
+                    const { tomorrow, thisWeek, future } = splitUpcoming(tasksData.upcoming);
+                    const overdueSorted = [...tasksData.overdue].sort(compareTasksByDue);
+                    const dueTodaySorted = [...tasksData.dueToday].sort(compareTasksByDue);
+                    const today = new Date();
+                    const todayLabel = formatGroupHeaderDate(today);
+                    const tomorrowDate = new Date(today);
+                    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+                    const tomorrowLabel = formatGroupHeaderDate(tomorrowDate);
+                    const endOfWeekDate = new Date(endOfThisWeekStr() + "T12:00:00");
+                    const endOfWeekLabel = formatGroupHeaderDate(endOfWeekDate);
+                    const thisWeekStart = new Date(tomorrowDate);
+                    thisWeekStart.setDate(thisWeekStart.getDate() + 1);
+                    const thisWeekLabel = `${formatGroupHeaderDate(thisWeekStart)} – ${formatGroupHeaderDate(endOfWeekDate)}`;
                     return (
                       <div className="flex min-h-0 flex-1 flex-col overflow-hidden pt-2">
-                        <div className="grid h-full min-h-0 grid-rows-[repeat(4,minmax(0,1fr))] gap-2">
-                          <TasksSection title="Overdue" count={tasksData.overdue.length} tasks={tasksData.overdue} renderTaskRow={renderTaskRow} />
-                          <TasksSection title="Today" count={tasksData.dueToday.length} tasks={tasksData.dueToday} renderTaskRow={renderTaskRow} />
-                          <TasksSection title="Next three days" count={nextThreeDays.length} tasks={nextThreeDays} renderTaskRow={renderTaskRow} />
-                          <TasksSection
-                            title="Greater than three days"
-                            count={greaterThanThreeDays.length}
-                            tasks={greaterThanThreeDays}
-                            defaultOpen={false}
-                            open={greaterThanThreeDaysOpen}
-                            onOpenChange={setGreaterThanThreeDaysOpen}
-                            renderTaskRow={renderTaskRow}
-                          />
-                        </div>
+                        <ScrollArea className="flex-1 min-h-0">
+                          <div className="flex flex-col gap-2 pb-2">
+                            <TasksSection title="Overdue" dateBadge={`< ${todayLabel}`} count={overdueSorted.length} tasks={overdueSorted} renderTaskRow={renderTaskRow} />
+                            <TasksSection title="Today" dateBadge={todayLabel} count={dueTodaySorted.length} tasks={dueTodaySorted} renderTaskRow={renderTaskRow} />
+                            <TasksSection title="Tomorrow" dateBadge={tomorrowLabel} count={tomorrow.length} tasks={tomorrow} renderTaskRow={renderTaskRow} />
+                            <TasksSection title="This week" dateBadge={thisWeekLabel} count={thisWeek.length} tasks={thisWeek} renderTaskRow={renderTaskRow} />
+                            <TasksSection
+                              title="Future"
+                              dateBadge={`> ${endOfWeekLabel}`}
+                              count={future.length}
+                              tasks={future}
+                              defaultOpen={false}
+                              open={futureOpen}
+                              onOpenChange={setFutureOpen}
+                              renderTaskRow={renderTaskRow}
+                            />
+                          </div>
+                        </ScrollArea>
                       </div>
                     );
                   })()
@@ -796,7 +885,7 @@ export default function HomePage() {
                             className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 p-2 text-xs"
                           >
                             <span className="truncate font-mono">{p.toolName}</span>
-                            <Button size="sm" variant="secondary" onClick={() => applyRefineProposal(p)}>
+                            <Button size="sm" variant="default" onClick={() => applyRefineProposal(p)}>
                               Apply
                             </Button>
                           </div>
