@@ -97,3 +97,31 @@ export async function proposeTaskRefinement(
   return { outputText, proposals: collector.proposals };
 }
 
+function scheduleDayMemoryContext(dateKey: string, scheduleMarkdown: string): string {
+  return `The user is on the Schedule screen. The selected day is **${dateKey}** (local calendar).
+
+Below is the **complete** snapshot for that day. Use it to answer questions about that day. You may still use tools to **mutate** tasks or calendar, or to fetch other days when needed.
+
+--- Schedule snapshot ---
+
+${scheduleMarkdown}`;
+}
+
+export async function proposeScheduleDayAssistant(
+  message: string,
+  dateKey: string,
+  scheduleMarkdown: string,
+  history?: ChatHistoryEntry[]
+): Promise<ProposeAssistantResult> {
+  const collector = createProposalCollector();
+  const memoryContext = scheduleDayMemoryContext(dateKey, scheduleMarkdown);
+  const result = await runWithPrompt(DEFAULT_SYSTEM_PROMPT, message, {
+    mode: "propose",
+    proposalCollector: collector,
+    memoryContext,
+    chatHistory: history,
+  });
+  const outputText = (result?.output ?? result?.output_text ?? "").toString();
+  return { outputText, proposals: collector.proposals };
+}
+

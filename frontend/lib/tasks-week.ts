@@ -13,6 +13,19 @@ export type WeekCalendarTasksData = {
   upcoming: WeekCalendarTask[];
 };
 
+/** Full task row from GET /api/tasks (same shape as `TaskItem` in the app). */
+export type TaskDataItem = WeekCalendarTask & {
+  priority: number;
+  context: "personal" | "work";
+  description?: string;
+};
+
+export type WeekCalendarTasksFullData = {
+  overdue: TaskDataItem[];
+  dueToday: TaskDataItem[];
+  upcoming: TaskDataItem[];
+};
+
 export function localDateStr(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -102,6 +115,16 @@ export function filterTasksForDateKey(tasks: WeekCalendarTask[], dateKey: string
 
 export function tasksDataTasksForDateKey(data: WeekCalendarTasksData | null, dateKey: string): WeekCalendarTask[] {
   return filterTasksForDateKey(mergeAllTasks(data), dateKey);
+}
+
+/** Deduped `TaskDataItem[]` due on the given local calendar day (YYYY-MM-DD). */
+export function tasksDataTaskItemsForDateKey(data: WeekCalendarTasksFullData | null, dateKey: string): TaskDataItem[] {
+  if (!data) return [];
+  const map = new Map<string, TaskDataItem>();
+  for (const t of [...data.overdue, ...data.dueToday, ...data.upcoming]) {
+    map.set(t.id, t);
+  }
+  return [...map.values()].filter((t) => dueDateOnly(t) === dateKey);
 }
 
 /** Date-only / full-day due (not a specific time slot). */

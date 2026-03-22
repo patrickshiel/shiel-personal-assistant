@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,8 +43,10 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import ScheduleOneDayView from "@/components/shadcn-studio/calendar/schedule-one-day-view";
 import ScheduleSevenDayView from "@/components/shadcn-studio/calendar/schedule-seven-day-view";
 import type { CalendarConfigured, CalendarEventDto } from "@/lib/calendar-events";
+import { buildScheduleDayContextMarkdown } from "@/lib/schedule-day-context";
 import {
   getNextSevenDayRange,
+  tasksDataTaskItemsForDateKey,
   tasksDataTasksForDateKey,
   tasksDataTasksInNextSevenDays,
 } from "@/lib/tasks-week";
@@ -442,6 +444,16 @@ export default function HomePage() {
   const [chatRunning, setChatRunning] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
 
+  const [scheduleChatMessages, setScheduleChatMessages] = useState<
+    { role: "user" | "assistant"; content: string }[]
+  >([]);
+  const [scheduleChatInput, setScheduleChatInput] = useState("");
+  const [scheduleChatRunning, setScheduleChatRunning] = useState(false);
+  const [scheduleChatError, setScheduleChatError] = useState<string | null>(null);
+  const [scheduleChatStreaming, setScheduleChatStreaming] = useState("");
+  const [scheduleChatProposals, setScheduleChatProposals] = useState<Proposal[]>([]);
+  const [scheduleChatApplyError, setScheduleChatApplyError] = useState<string | null>(null);
+
   const [calendarEvents, setCalendarEvents] = useState<CalendarEventDto[]>([]);
   const [calendarConfigured, setCalendarConfigured] = useState<CalendarConfigured>({
     personal: false,
@@ -597,6 +609,20 @@ export default function HomePage() {
 
   const scheduleSevenDayTasks = tasksDataTasksInNextSevenDays(tasksData);
   const scheduleDayTasks = tasksDataTasksForDateKey(tasksData, localDateStr(scheduleDayDate));
+  const scheduleDayMarkdown = useMemo(() => {
+    const dk = localDateStr(scheduleDayDate);
+    const items = tasksDataTaskItemsForDateKey(tasksData, dk);
+    return buildScheduleDayContextMarkdown(dk, scheduleDayDate, items, calendarEvents);
+  }, [scheduleDayDate, tasksData, calendarEvents]);
+
+  useEffect(() => {
+    setScheduleChatMessages([]);
+    setScheduleChatStreaming("");
+    setScheduleChatError(null);
+    setScheduleChatInput("");
+    setScheduleChatProposals([]);
+    setScheduleChatApplyError(null);
+  }, [scheduleDayDate]);
 
   useEffect(() => {
     setRefineMessages([]);
@@ -888,6 +914,201 @@ export default function HomePage() {
       setChatRunning(false);
       setChatInput("");
       await refreshJobs();
+    }
+  };
+
+  const runScheduleDayAssistant = async () => {
+    const message = scheduleChatInput.trim();
+    if (!message) return;
+
+    const dateKey = localDateStr(scheduleDayDate);
+    const history = scheduleChatMessages.map((m) => ({
+      role: m.role === "user" ? ("user" as const) : ("assistant" as const),
+      content: m.content,
+    }));
+
+    setScheduleChatMessages((prev) => [...prev, { role: "user", content: message }]);
+    setScheduleChatInput("");
+    setScheduleChatRunning(true);
+    setScheduleChatStreaming("");
+    setScheduleChatError(null);
+    setScheduleChatProposals([]);
+    setScheduleChatApplyError(null);
+    setSelectedJob(null);
+
+    try {
+      const res = await fetch(`${backendUrl}/api/assistant/schedule-day`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          dateKey,
+          scheduleMarkdown: scheduleDayMarkdown,
+          history,
+        }),
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        throw new Error(errText || `Schedule assistant failed: ${res.status}`);
+      }
+      if (!res.body) throw new Error("No response body");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fullText = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+
+        for (const frame of frames) {
+          const { event, data } = parseSseEvent(frame);
+          if (event === "assistant_output_delta") {
+            const delta = (data?.delta as string | undefined) ?? "";
+            fullText += delta;
+            setScheduleChatStreaming((prev) => prev + delta);
+          }
+          if (event === "assistant_output_end") {
+            setScheduleChatMessages((prev) => [...prev, { role: "assistant", content: fullText }]);
+            setScheduleChatStreaming("");
+          }
+          if (event === "proposals") {
+            const list = (data?.proposals as Proposal[] | undefined) ?? [];
+            setScheduleChatProposals(list);
+          }
+          if (event === "error") {
+            throw new Error((data?.message as string) ?? "Backend error");
+          }
+        }
+      }
+    } catch (err) {
+      setScheduleChatError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScheduleChatRunning(false);
+      await refreshJobs();
+    }
+  };
+
+  const applyScheduleChatProposal = async (p: Proposal) => {
+    setScheduleChatApplyError(null);
+    const raw = p.args as Record<string, unknown>;
+
+    const readContext = (): TaskContext | undefined => {
+      const c = raw.context as string | undefined;
+      return c === "personal" || c === "work" ? c : undefined;
+    };
+
+    try {
+      if (p.toolName === "todoist_update_task") {
+        const taskId =
+          (typeof raw.taskId === "string" ? raw.taskId : undefined) ??
+          (typeof raw.task_id === "string" ? raw.task_id : undefined);
+        if (!taskId) {
+          setScheduleChatApplyError("Proposal is missing task id.");
+          return;
+        }
+        const context = readContext();
+        if (!context) {
+          setScheduleChatApplyError("Proposal is missing context (personal or work).");
+          return;
+        }
+        const content = typeof raw.content === "string" ? raw.content : undefined;
+        const dueString =
+          typeof raw.dueString === "string" ? raw.dueString : typeof raw.due_string === "string" ? raw.due_string : undefined;
+        const priority = typeof raw.priority === "number" ? raw.priority : undefined;
+        const description =
+          raw.description === null ? null : typeof raw.description === "string" ? raw.description : undefined;
+        const res = await fetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            context,
+            ...(content != null && { content }),
+            ...(dueString != null && { dueString }),
+            ...(priority != null && { priority }),
+            ...(description !== undefined && { description: description === null ? "" : description }),
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text().catch(() => "Update failed"));
+        setScheduleChatProposals((prev) => prev.filter((x) => x.id !== p.id));
+        await refreshTasks();
+        setSelectedTask((prev) => {
+          if (!prev || prev.id !== taskId) return prev;
+          const nextDesc =
+            description === undefined
+              ? prev.description
+              : description === null || description === ""
+                ? undefined
+                : description;
+          return {
+            ...prev,
+            content: content ?? prev.content,
+            due_string: dueString ?? prev.due_string,
+            priority: priority ?? prev.priority,
+            description: nextDesc,
+          };
+        });
+        return;
+      }
+
+      if (p.toolName === "todoist_close_task") {
+        const taskId = typeof raw.taskId === "string" ? raw.taskId : undefined;
+        const context = readContext();
+        if (!taskId || !context) {
+          setScheduleChatApplyError("Proposal is missing task id or context.");
+          return;
+        }
+        const res = await fetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}/close`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ context }),
+        });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok) throw new Error(json.error ?? "Complete failed");
+        setScheduleChatProposals((prev) => prev.filter((x) => x.id !== p.id));
+        await refreshTasks();
+        return;
+      }
+
+      if (p.toolName === "todoist_add_task") {
+        const context = readContext();
+        const content = typeof raw.content === "string" ? raw.content.trim() : "";
+        if (!context || !content) {
+          setScheduleChatApplyError("Proposal is missing context or task content.");
+          return;
+        }
+        const dueString =
+          typeof raw.dueString === "string" ? raw.dueString : typeof raw.due_string === "string" ? raw.due_string : undefined;
+        const priority = typeof raw.priority === "number" ? raw.priority : undefined;
+        const description =
+          raw.description === null ? undefined : typeof raw.description === "string" ? raw.description : undefined;
+        const res = await fetch(`${backendUrl}/api/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            context,
+            content,
+            ...(dueString != null && dueString !== "" && { dueString }),
+            ...(priority != null && { priority }),
+            ...(description != null && description !== "" && { description }),
+          }),
+        });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok) throw new Error(json.error ?? "Create failed");
+        setScheduleChatProposals((prev) => prev.filter((x) => x.id !== p.id));
+        await refreshTasks();
+        return;
+      }
+
+      setScheduleChatApplyError(
+        `This action (${p.toolName}) must be run from the Overview approval queue or is not supported here.`
+      );
+    } catch (e) {
+      setScheduleChatApplyError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -1645,26 +1866,137 @@ export default function HomePage() {
               ) : null}
             </div>
             {!tasksLoading && tasksData && !tasksData.error ? (
-              <ScheduleOneDayView
-                className="min-h-0 flex-1"
-                dayDate={scheduleDayDate}
-                onPrevDay={() => shiftScheduleDay(-1)}
-                onNextDay={() => shiftScheduleDay(1)}
-                tasks={scheduleDayTasks}
-                calendarEvents={calendarEvents}
-                calendarLoading={calendarLoading}
-                calendarError={calendarError}
-                calendarConfigured={calendarConfigured}
-                onAddTask={() => {
-                  setActiveTab("tasks");
-                  startNewTask();
-                }}
-                onSelectTask={(t) => {
-                  setActiveTab("tasks");
-                  setPanelCreating(false);
-                  setSelectedTask(t as TaskItem);
-                }}
-              />
+              <ResizablePanelGroup
+                orientation="horizontal"
+                className="min-h-0 flex-1 rounded-lg border border-border bg-muted/35 shadow-sm shadow-black/[0.07] ring-1 ring-black/[0.04] dark:border-border/60 dark:bg-muted/15 dark:shadow-none dark:ring-0"
+              >
+                <ResizablePanel defaultSize={50} minSize={25} className="min-h-0 min-w-0">
+                  <ScheduleOneDayView
+                    className="min-h-0 h-full"
+                    dayDate={scheduleDayDate}
+                    onPrevDay={() => shiftScheduleDay(-1)}
+                    onNextDay={() => shiftScheduleDay(1)}
+                    tasks={scheduleDayTasks}
+                    calendarEvents={calendarEvents}
+                    calendarLoading={calendarLoading}
+                    calendarError={calendarError}
+                    onAddTask={() => {
+                      setActiveTab("tasks");
+                      startNewTask();
+                    }}
+                    onSelectTask={(t) => {
+                      setActiveTab("tasks");
+                      setPanelCreating(false);
+                      setSelectedTask(t as TaskItem);
+                    }}
+                  />
+                </ResizablePanel>
+                <ResizableHandle />
+                <ResizablePanel defaultSize={50} minSize={25} className="min-h-0 min-w-0">
+                  <Card className="flex h-full min-h-0 flex-col gap-0 rounded-none border-0 bg-transparent py-0 shadow-none ring-0">
+                    <CardHeader className="shrink-0 px-4 pb-2 pt-3">
+                      <CardTitle className="text-sm">Day assistant</CardTitle>
+                    </CardHeader>
+                    <CardContent className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-4 pb-4 pt-0">
+                      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm ring-1 ring-border/40">
+                        <Conversation className="min-h-0 flex-1 overflow-y-auto">
+                          <ConversationContent className="gap-4 p-3">
+                            {scheduleChatMessages.length === 0 && !scheduleChatStreaming ? (
+                              <ConversationEmptyState
+                                icon={<MessageSquare className="size-10 text-muted-foreground" />}
+                                title="Ask about this day"
+                                description="Questions use the full task and calendar snapshot for the selected date."
+                              />
+                            ) : null}
+                            {scheduleChatMessages.map((m, i) => (
+                              <Message key={i} from={m.role}>
+                                <MessageContent>
+                                  <MessageResponse>{m.content}</MessageResponse>
+                                </MessageContent>
+                              </Message>
+                            ))}
+                            {scheduleChatStreaming ? (
+                              <Message from="assistant">
+                                <MessageContent>
+                                  <MessageResponse>{scheduleChatStreaming}</MessageResponse>
+                                </MessageContent>
+                              </Message>
+                            ) : null}
+                            {scheduleChatRunning && !scheduleChatStreaming ? (
+                              <Message from="assistant">
+                                <MessageContent>
+                                  <div
+                                    className="flex items-center gap-2 text-sm text-muted-foreground"
+                                    role="status"
+                                    aria-live="polite"
+                                    aria-label="Assistant is responding"
+                                  >
+                                    <Loader2Icon className="size-4 shrink-0 animate-spin" aria-hidden />
+                                    <span>Thinking…</span>
+                                  </div>
+                                </MessageContent>
+                              </Message>
+                            ) : null}
+                          </ConversationContent>
+                          <ConversationScrollButton />
+                        </Conversation>
+                      </div>
+                      {scheduleChatProposals.length > 0 ? (
+                        <div className="max-h-36 shrink-0 space-y-2 overflow-y-auto rounded-lg border border-border bg-muted/25 p-2">
+                          <p className="text-xs font-medium text-muted-foreground">Suggested task actions</p>
+                          {scheduleChatProposals.map((p) => (
+                            <div
+                              key={p.id}
+                              className="flex items-center justify-between gap-2 rounded-md border border-border bg-card/80 p-2 text-xs"
+                            >
+                              <span className="min-w-0 truncate font-mono" title={JSON.stringify(p.args)}>
+                                {p.toolName}
+                              </span>
+                              <Button
+                                size="sm"
+                                variant="default"
+                                className="shrink-0"
+                                onClick={() => void applyScheduleChatProposal(p)}
+                              >
+                                Apply
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {scheduleChatApplyError ? (
+                        <p className="shrink-0 text-xs text-destructive">{scheduleChatApplyError}</p>
+                      ) : null}
+                      {scheduleChatError ? (
+                        <p className="shrink-0 text-xs text-destructive">Error: {scheduleChatError}</p>
+                      ) : null}
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          void runScheduleDayAssistant();
+                        }}
+                        className="flex shrink-0 gap-2"
+                      >
+                        <Input
+                          value={scheduleChatInput}
+                          onChange={(e) => setScheduleChatInput(e.target.value)}
+                          placeholder="Ask about tasks or events on this day…"
+                          className="min-w-0 flex-1 bg-background"
+                          disabled={scheduleChatRunning}
+                        />
+                        <Button
+                          type="submit"
+                          disabled={scheduleChatRunning || !scheduleChatInput.trim()}
+                          size="sm"
+                          className="shrink-0"
+                        >
+                          {scheduleChatRunning ? "…" : "Send"}
+                        </Button>
+                      </form>
+                    </CardContent>
+                  </Card>
+                </ResizablePanel>
+              </ResizablePanelGroup>
             ) : null}
           </div>
         </TabsContent>

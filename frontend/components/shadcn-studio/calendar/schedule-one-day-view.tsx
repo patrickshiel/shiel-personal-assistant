@@ -4,16 +4,11 @@ import { useMemo } from "react";
 import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
 
 import { ScheduleCurrentTimeBar } from "@/components/shadcn-studio/calendar/schedule-current-time-bar";
-import {
-  CalendarStatusBar,
-  TASK_SCHEDULE_STYLES,
-  TimedBlock,
-} from "@/components/shadcn-studio/calendar/schedule-view-shared";
+import { TASK_SCHEDULE_STYLES, TimedBlock } from "@/components/shadcn-studio/calendar/schedule-view-shared";
 import { Button } from "@/components/ui/button";
 import {
   groupCalendarEventsByDateKey,
   stylesForCalendarContext,
-  type CalendarConfigured,
   type CalendarEventDto,
 } from "@/lib/calendar-events";
 import {
@@ -43,7 +38,6 @@ export type ScheduleOneDayViewProps = {
   calendarEvents?: CalendarEventDto[];
   calendarLoading?: boolean;
   calendarError?: string | null;
-  calendarConfigured?: CalendarConfigured;
 };
 
 function formatDayHeading(d: Date): { weekday: string; dayNum: string; monthShort: string } {
@@ -65,7 +59,6 @@ export function ScheduleOneDayView({
   calendarEvents = [],
   calendarLoading = false,
   calendarError = null,
-  calendarConfigured,
 }: ScheduleOneDayViewProps) {
   const dateKey = useMemo(() => localDateStr(dayDate), [dayDate]);
   const todayStr = localDateStr(new Date());
@@ -128,7 +121,7 @@ export function ScheduleOneDayView({
               <ChevronRightIcon className="size-4" />
             </Button>
           </div>
-          <div className="min-w-0 space-y-1">
+          <div className="min-w-0">
             <h2
               className={cn(
                 "truncate text-base font-semibold tracking-tight",
@@ -141,10 +134,16 @@ export function ScheduleOneDayView({
                 <span className="text-muted-foreground ml-1.5 text-sm font-normal">· Today</span>
               ) : null}
             </h2>
-            <p className="text-muted-foreground text-[11px]">
-              {DEFAULT_DAY_START_HOUR}:00–{DEFAULT_DAY_END_HOUR}:00 · 30-minute rows
-            </p>
-            <CalendarStatusBar loading={calendarLoading} error={calendarError} configured={calendarConfigured} />
+            {calendarLoading || calendarError ? (
+              <p
+                className={cn(
+                  "mt-1 text-[11px]",
+                  calendarError ? "text-destructive" : "text-muted-foreground"
+                )}
+              >
+                {calendarLoading ? "Loading calendar…" : calendarError}
+              </p>
+            ) : null}
           </div>
         </div>
         {onAddTask ? (

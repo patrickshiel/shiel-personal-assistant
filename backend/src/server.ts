@@ -7,7 +7,12 @@ import { z } from "zod";
 
 import { getAllTriggerIds, getTrigger, type TriggerId } from "./orchestrator/triggers.js";
 import { newId, createJob, loadJob, listJobs, saveJob, type JobRecord } from "./api/job-store.js";
-import { proposeAssistant, proposeTaskRefinement, proposeTrigger } from "./api/propose-run.js";
+import {
+  proposeAssistant,
+  proposeScheduleDayAssistant,
+  proposeTaskRefinement,
+  proposeTrigger,
+} from "./api/propose-run.js";
 import { executeProposals } from "./api/execute-run.js";
 import { createProposalCollector } from "./agent/tools.js";
 import { runWeeklyPrepApplyFromMarkdown, runWeeklyPrepList } from "./orchestrator/weekly-prep.js";
@@ -53,6 +58,21 @@ async function sseStreamText(res: express.Response, eventPrefix: string, text: s
 
 const proposeAssistantBody = z.object({
   message: z.string().min(1).max(20000),
+});
+
+const scheduleDayAssistantBody = z.object({
+  message: z.string().min(1).max(20000),
+  dateKey: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  scheduleMarkdown: z.string().min(1).max(120_000),
+  history: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().max(32_000),
+      })
+    )
+    .max(40)
+    .optional(),
 });
 
 const proposeTriggerBody = z.object({
@@ -270,6 +290,39 @@ app.post("/api/assistant/propose", async (req, res) => {
 
   await proposeJobSse(req, res, async () => {
     const { outputText, proposals } = await proposeAssistant(body.data.message);
+    await createJob({
+      id: jobId,
+      type: "assistant",
+      status: "pending",
+      message: body.data.message,
+      outputText,
+      proposals,
+    });
+
+    sseSend(res, "assistant_output_start", {});
+    await sseStreamText(res, "assistant_output", outputText);
+    sseSend(res, "assistant_output_end", {});
+    sseSend(res, "proposals", { jobId, proposals });
+  });
+});
+
+app.post("/api/assistant/schedule-day", async (req, res) => {
+  const body = scheduleDayAssistantBody.safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+
+  const jobId = newId("job");
+
+  await proposeJobSse(req, res, async () => {
+    const history = body.data.history?.map((h) => ({
+      role: h.role === "user" ? ("human" as const) : ("ai" as const),
+      content: h.content,
+    }));
+    const { outputText, proposals } = await proposeScheduleDayAssistant(
+      body.data.message,
+      body.data.dateKey,
+      body.data.scheduleMarkdown,
+      history
+    );
     await createJob({
       id: jobId,
       type: "assistant",
