@@ -10,8 +10,11 @@ interface SpeechRecognition extends EventTarget {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
+  /** @see https://wicg.github.io/speech-api/#speechrecognitionstate-enum */
+  readonly state?: "idle" | "starting" | "running" | "stopping";
   start(): void;
   stop(): void;
+  abort?(): void;
   onstart: ((this: SpeechRecognition, ev: Event) => void) | null;
   onend: ((this: SpeechRecognition, ev: Event) => void) | null;
   onresult:
@@ -98,6 +101,8 @@ export const SpeechInput = ({
   const [mode] = useState<SpeechInputMode>(detectSpeechInputMode);
   const [isRecognitionReady, setIsRecognitionReady] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  /** True between start() and onend/onerror; avoids double start() before React state catches up. */
+  const speechSessionActiveRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -126,10 +131,12 @@ export const SpeechInput = ({
     speechRecognition.lang = lang;
 
     const handleStart = () => {
+      speechSessionActiveRef.current = true;
       setIsListening(true);
     };
 
     const handleEnd = () => {
+      speechSessionActiveRef.current = false;
       setIsListening(false);
     };
 
@@ -153,8 +160,14 @@ export const SpeechInput = ({
       }
     };
 
-    const handleError = () => {
+    const handleError = (event: Event) => {
+      speechSessionActiveRef.current = false;
       setIsListening(false);
+      if (process.env.NODE_ENV === "development") {
+        const err = event as SpeechRecognitionErrorEvent;
+        // Arc / Chromium: common values include not-allowed, aborted, network
+        console.warn("[SpeechInput]", err.error ?? event.type);
+      }
     };
 
     speechRecognition.addEventListener("start", handleStart);
@@ -166,11 +179,16 @@ export const SpeechInput = ({
     setIsRecognitionReady(true);
 
     return () => {
+      speechSessionActiveRef.current = false;
       speechRecognition.removeEventListener("start", handleStart);
       speechRecognition.removeEventListener("end", handleEnd);
       speechRecognition.removeEventListener("result", handleResult);
       speechRecognition.removeEventListener("error", handleError);
-      speechRecognition.stop();
+      try {
+        speechRecognition.stop();
+      } catch {
+        /* already idle */
+      }
       recognitionRef.current = null;
       setIsRecognitionReady(false);
     };
@@ -264,10 +282,30 @@ export const SpeechInput = ({
 
   const toggleListening = useCallback(() => {
     if (mode === "speech-recognition" && recognitionRef.current) {
-      if (isListening) {
-        recognitionRef.current.stop();
+      const rec = recognitionRef.current;
+      const apiRunning =
+        typeof rec.state === "string"
+          ? rec.state === "running" || rec.state === "starting"
+          : speechSessionActiveRef.current;
+
+      if (isListening || apiRunning) {
+        try {
+          rec.stop();
+        } catch {
+          speechSessionActiveRef.current = false;
+          setIsListening(false);
+        }
       } else {
-        recognitionRef.current.start();
+        try {
+          speechSessionActiveRef.current = true;
+          rec.start();
+        } catch (err) {
+          speechSessionActiveRef.current = false;
+          setIsListening(false);
+          if (process.env.NODE_ENV === "development") {
+            console.warn("[SpeechInput] start failed", err);
+          }
+        }
       }
     } else if (mode === "media-recorder") {
       if (isListening) {
