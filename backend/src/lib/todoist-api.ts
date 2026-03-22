@@ -98,12 +98,13 @@ export async function addTask(
 export async function updateTask(
   token: string,
   taskId: string,
-  args: { content?: string; due_string?: string; priority?: number }
+  args: { content?: string; due_string?: string; priority?: number; description?: string }
 ): Promise<unknown> {
   const body: Record<string, unknown> = {};
   if (args.content != null) body.content = args.content;
   if (args.due_string != null) body.due_string = args.due_string;
   if (args.priority != null) body.priority = args.priority;
+  if (args.description != null) body.description = args.description;
   if (Object.keys(body).length === 0) return undefined;
   return request<unknown>("POST", `tasks/${taskId}`, token, { body });
 }

@@ -73,6 +73,7 @@ export const updateTaskSchema = z.object({
   content: z.string().nullable().optional(),
   dueString: z.string().nullable().optional(),
   priority: z.number().min(1).max(4).nullable().optional(),
+  description: z.string().max(10000).nullable().optional().describe("Task description (markdown supported)."),
 });
 
 export const closeTaskSchema = z.object({
@@ -143,10 +144,17 @@ export async function updateTask(input: UpdateTaskInput): Promise<string> {
   if (!token) return JSON.stringify({ error: NOT_CONFIGURED_MESSAGE });
   try {
     const content = input.content != null ? input.content.trim() : undefined;
+    const description =
+      input.description === undefined
+        ? undefined
+        : input.description === null
+          ? ""
+          : input.description.trim();
     await todoistApi.updateTask(token, input.taskId, {
       content,
       due_string: input.dueString ?? undefined,
       priority: input.priority ?? undefined,
+      description,
     });
     return JSON.stringify({ success: true });
   } catch (e) {
