@@ -153,6 +153,8 @@ npm run auth-google -- --work
 
 After both are set, the agent can list/create events on both calendars. For a single view of both calendars (e.g. weekly prep), it uses one tool call that fetches both; for creating events it uses the context (personal vs work) you specify.
 
+The **Schedule** and **Next 7 days** tabs load calendars via the Express API: `GET /api/calendar/events?timeMin=…&timeMax=…` (single selected day or the next 7 local calendar days from the browser). Ensure the backend is running on `PORT` (default `3001`) and `NEXT_PUBLIC_BACKEND_URL` in the frontend points at it.
+
 ---
 
 ## 6. Verify

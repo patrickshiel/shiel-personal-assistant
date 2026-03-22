@@ -15,6 +15,12 @@ import { runDebriefSynthesis } from "./cli/debrief.js";
 import { getStateDir } from "./lib/paths.js";
 import { getTasksGrouped } from "./api/tasks-api.js";
 import * as todoist from "./tools/todoist.js";
+import {
+  isCalendarConfigured,
+  listPrimaryCalendarEvents,
+  type CalendarContext,
+  type NormalizedCalendarEvent,
+} from "./lib/google-calendar.js";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -71,6 +77,7 @@ const taskUpdateBody = z.object({
   content: z.string().min(1).max(10000).optional(),
   dueString: z.string().max(200).optional(),
   priority: z.number().min(1).max(4).optional(),
+  description: z.string().max(10000).optional(),
 });
 
 const taskCloseBody = z.object({
@@ -135,6 +142,51 @@ app.get("/api/tasks", async (_req, res) => {
   }
 });
 
+/** Google Calendar events for Next 7 days tab (uses GOOGLE_* refresh tokens from .env). */
+app.get("/api/calendar/events", async (req, res) => {
+  const timeMinStr = req.query.timeMin;
+  const timeMaxStr = req.query.timeMax;
+  if (typeof timeMinStr !== "string" || typeof timeMaxStr !== "string") {
+    return res.status(400).json({ error: "Query params timeMin and timeMax (ISO 8601) are required" });
+  }
+  const timeMin = new Date(timeMinStr);
+  const timeMax = new Date(timeMaxStr);
+  if (Number.isNaN(timeMin.getTime()) || Number.isNaN(timeMax.getTime())) {
+    return res.status(400).json({ error: "Invalid timeMin or timeMax" });
+  }
+
+  const contextParam = typeof req.query.context === "string" ? req.query.context : "all";
+  const contexts: CalendarContext[] =
+    contextParam === "work" ? ["work"] : contextParam === "personal" ? ["personal"] : ["personal", "work"];
+
+  const configured = {
+    personal: isCalendarConfigured("personal"),
+    work: isCalendarConfigured("work"),
+  };
+
+  try {
+    const events: NormalizedCalendarEvent[] = [];
+    for (const ctx of contexts) {
+      if (!configured[ctx]) continue;
+      const chunk = await listPrimaryCalendarEvents(ctx, timeMin, timeMax);
+      events.push(...chunk);
+    }
+
+    const sortKey = (e: NormalizedCalendarEvent) => (e.allDay ? `${e.start}T00:00:00` : e.start);
+    events.sort((a, b) => {
+      const cmp = sortKey(a).localeCompare(sortKey(b));
+      if (cmp !== 0) return cmp;
+      return a.title.localeCompare(b.title);
+    });
+
+    res.json({ events, configured });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[api/calendar/events]", err);
+    res.status(500).json({ events: [], configured, error: message });
+  }
+});
+
 app.patch("/api/tasks/:taskId", async (req, res) => {
   const body = taskUpdateBody.safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: body.error.flatten() });
@@ -146,6 +198,7 @@ app.patch("/api/tasks/:taskId", async (req, res) => {
       content: body.data.content,
       dueString: body.data.dueString,
       priority: body.data.priority,
+      ...(body.data.description !== undefined && { description: body.data.description }),
     });
     const parsed = JSON.parse(String(raw)) as { success?: boolean; error?: string };
     if (parsed?.error) return res.status(400).json({ error: parsed.error });
