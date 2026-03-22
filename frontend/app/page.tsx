@@ -371,6 +371,15 @@ function parseSseEvent(rawEvent: string): { event: string | null; data: any } {
   return { event, data };
 }
 
+function proposalActionLabel(p: Proposal): string {
+  const args = p.args as Record<string, unknown>;
+  if (p.toolName === "obsidian_write_note" || p.toolName === "obsidian_append_to_note") {
+    const rel = typeof args.relativePath === "string" ? args.relativePath : "";
+    if (rel) return `${p.toolName} · ${rel}`;
+  }
+  return p.toolName;
+}
+
 async function fetchSseDeltas(url: string, init: RequestInit, onDelta: (delta: string) => void) {
   const res = await fetch(url, init);
   if (!res.ok) {
@@ -993,8 +1002,65 @@ export default function HomePage() {
     }
   };
 
+  const applyObsidianProposalFromTool = async (
+    p: Proposal,
+    opts: { onSuccess: () => void; setApplyError: (msg: string | null) => void }
+  ) => {
+    opts.setApplyError(null);
+    try {
+      if (p.toolName !== "obsidian_write_note" && p.toolName !== "obsidian_append_to_note") return;
+      const raw = p.args as Record<string, unknown>;
+      const relativePath = typeof raw.relativePath === "string" ? raw.relativePath.trim() : "";
+      const content = typeof raw.content === "string" ? raw.content : "";
+      if (!relativePath || !content.trim()) {
+        opts.setApplyError("Obsidian proposal is missing relativePath or content.");
+        return;
+      }
+      const context = raw.context === "personal" || raw.context === "work" ? raw.context : undefined;
+      const url =
+        p.toolName === "obsidian_write_note"
+          ? `${backendUrl}/api/obsidian/write`
+          : `${backendUrl}/api/obsidian/append`;
+      const body: Record<string, unknown> = { relativePath, content };
+      if (context) body.context = context;
+      if (
+        p.toolName === "obsidian_write_note" &&
+        raw.frontmatter != null &&
+        typeof raw.frontmatter === "object" &&
+        !Array.isArray(raw.frontmatter)
+      ) {
+        body.frontmatter = raw.frontmatter;
+      }
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      let json: { error?: string } = {};
+      try {
+        json = (await res.json()) as { error?: string };
+      } catch {
+        /* non-JSON body */
+      }
+      if (!res.ok) {
+        throw new Error(json.error ?? (await res.text().catch(() => "Obsidian request failed")));
+      }
+      if (json.error) throw new Error(json.error);
+      opts.onSuccess();
+    } catch (e) {
+      opts.setApplyError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const applyScheduleChatProposal = async (p: Proposal) => {
     setScheduleChatApplyError(null);
+    if (p.toolName === "obsidian_write_note" || p.toolName === "obsidian_append_to_note") {
+      await applyObsidianProposalFromTool(p, {
+        onSuccess: () => setScheduleChatProposals((prev) => prev.filter((x) => x.id !== p.id)),
+        setApplyError: setScheduleChatApplyError,
+      });
+      return;
+    }
     const raw = p.args as Record<string, unknown>;
 
     const readContext = (): TaskContext | undefined => {
@@ -1197,6 +1263,13 @@ export default function HomePage() {
   };
 
   const applyRefineProposal = async (p: Proposal) => {
+    if (p.toolName === "obsidian_write_note" || p.toolName === "obsidian_append_to_note") {
+      await applyObsidianProposalFromTool(p, {
+        onSuccess: () => setRefineProposals((prev) => prev.filter((x) => x.id !== p.id)),
+        setApplyError: setTaskActionError,
+      });
+      return;
+    }
     if (!selectedTask) return;
     const raw = p.args as Record<string, unknown>;
     const taskId = (typeof raw.taskId === "string" ? raw.taskId : typeof raw.task_id === "string" ? raw.task_id : undefined) ?? selectedTask.id;
@@ -1784,14 +1857,16 @@ export default function HomePage() {
                     </div>
                     {refineProposals.length > 0 ? (
                       <div className="space-y-2">
-                        <p className="text-xs font-medium text-muted-foreground">Suggested updates</p>
+                        <p className="text-xs font-medium text-muted-foreground">Suggested actions</p>
                         {refineProposals.map((p) => (
                           <div
                             key={p.id}
                             className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 p-2 text-xs"
                           >
-                            <span className="truncate font-mono">{p.toolName}</span>
-                            <Button size="sm" variant="default" onClick={() => applyRefineProposal(p)}>
+                            <span className="min-w-0 truncate font-mono" title={JSON.stringify(p.args)}>
+                              {proposalActionLabel(p)}
+                            </span>
+                            <Button size="sm" variant="default" onClick={() => void applyRefineProposal(p)}>
                               Apply
                             </Button>
                           </div>
@@ -1943,14 +2018,14 @@ export default function HomePage() {
                       </div>
                       {scheduleChatProposals.length > 0 ? (
                         <div className="max-h-36 shrink-0 space-y-2 overflow-y-auto rounded-lg border border-border bg-muted/25 p-2">
-                          <p className="text-xs font-medium text-muted-foreground">Suggested task actions</p>
+                          <p className="text-xs font-medium text-muted-foreground">Suggested actions</p>
                           {scheduleChatProposals.map((p) => (
                             <div
                               key={p.id}
                               className="flex items-center justify-between gap-2 rounded-md border border-border bg-card/80 p-2 text-xs"
                             >
                               <span className="min-w-0 truncate font-mono" title={JSON.stringify(p.args)}>
-                                {p.toolName}
+                                {proposalActionLabel(p)}
                               </span>
                               <Button
                                 size="sm"

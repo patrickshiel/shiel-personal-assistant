@@ -20,6 +20,7 @@ import { runDebriefSynthesis } from "./cli/debrief.js";
 import { getStateDir } from "./lib/paths.js";
 import { getTasksGrouped } from "./api/tasks-api.js";
 import * as todoist from "./tools/todoist.js";
+import * as obsidian from "./tools/obsidian.js";
 import {
   isCalendarConfigured,
   listPrimaryCalendarEvents,
@@ -110,6 +111,19 @@ const taskCreateBody = z.object({
   dueString: z.string().max(200).optional(),
   priority: z.number().min(1).max(4).optional(),
   description: z.string().max(10000).optional(),
+});
+
+const obsidianWriteBody = z.object({
+  context: z.enum(["personal", "work"]).optional(),
+  relativePath: z.string().min(1).max(2000),
+  content: z.string().min(1).max(500_000),
+  frontmatter: z.record(z.unknown()).nullable().optional(),
+});
+
+const obsidianAppendBody = z.object({
+  context: z.enum(["personal", "work"]).optional(),
+  relativePath: z.string().min(1).max(2000),
+  content: z.string().min(1).max(500_000),
 });
 
 const taskRefineBody = z.object({
@@ -261,6 +275,43 @@ app.post("/api/tasks/:taskId/close", async (req, res) => {
     const parsed = JSON.parse(String(raw)) as { success?: boolean; error?: string };
     if (parsed?.error) return res.status(400).json({ error: parsed.error });
     res.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post("/api/obsidian/write", async (req, res) => {
+  const body = obsidianWriteBody.safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+  try {
+    const raw = await obsidian.writeNote({
+      context: body.data.context ?? null,
+      relativePath: body.data.relativePath,
+      content: body.data.content,
+      frontmatter: body.data.frontmatter ?? null,
+    });
+    const parsed = JSON.parse(String(raw)) as { error?: string; success?: boolean };
+    if (parsed?.error) return res.status(400).json({ error: parsed.error });
+    res.status(201).json(parsed);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post("/api/obsidian/append", async (req, res) => {
+  const body = obsidianAppendBody.safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+  try {
+    const raw = await obsidian.appendToNote({
+      context: body.data.context ?? null,
+      relativePath: body.data.relativePath,
+      content: body.data.content,
+    });
+    const parsed = JSON.parse(String(raw)) as { error?: string; success?: boolean };
+    if (parsed?.error) return res.status(400).json({ error: parsed.error });
+    res.json(parsed);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: message });

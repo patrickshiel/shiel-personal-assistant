@@ -100,7 +100,9 @@ export async function proposeTaskRefinement(
 function scheduleDayMemoryContext(dateKey: string, scheduleMarkdown: string): string {
   return `The user is on the Schedule screen. The selected day is **${dateKey}** (local calendar).
 
-Below is the **complete** snapshot for that day. Use it to answer questions about that day. You may still use tools to **mutate** tasks or calendar, or to fetch other days when needed.
+Below is the **complete** snapshot for that day. Use it to answer questions about that day. You may still use tools to **mutate** tasks or calendar, **save content to Obsidian**, or to fetch other days when needed.
+
+**Obsidian daily briefing:** When the user asks to save, brief, export, or put the rundown into a **daily note** (or similar), use **obsidian_write_note** or **obsidian_append_to_note** with markdown \`content\`. Prefer a path tied to this day: e.g. \`Daily/${dateKey}.md\` (relative to the vault; personal vault paths are auto-prefixed with \`Personal/\` by the tool). Use **context** \`personal\` or \`work\` to pick the vault. If the file may already exist, call **obsidian_read_note** first; if it exists and the user did not ask to replace it, use **obsidian_append_to_note** (e.g. a \`## Briefing\` section with a short timestamp) instead of overwriting.
 
 --- Schedule snapshot ---
 
