@@ -14,7 +14,18 @@ import {
 } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { SpeechInput } from "@/components/ai-elements/speech-input";
-import { ArrowUpIcon, CalendarIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, Loader2Icon, MessageSquare, PencilIcon } from "lucide-react";
+import {
+  ArrowUpIcon,
+  CalendarIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  Loader2Icon,
+  MessageSquare,
+  PencilIcon,
+  PlusIcon,
+  XIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Collapsible,
@@ -22,6 +33,21 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { TaskDuePicker, taskToInitialDueString } from "@/components/task-due-picker";
+import { ThemeToggle } from "@/components/theme-toggle";
+import ScheduleOneDayView from "@/components/shadcn-studio/calendar/schedule-one-day-view";
+import ScheduleSevenDayView from "@/components/shadcn-studio/calendar/schedule-seven-day-view";
+import type { CalendarConfigured, CalendarEventDto } from "@/lib/calendar-events";
+import {
+  getNextSevenDayRange,
+  tasksDataTasksForDateKey,
+  tasksDataTasksInNextSevenDays,
+} from "@/lib/tasks-week";
 
 type Trigger = { id: string; schedule: string | null; defaultInput: string };
 type Proposal = { id: string; toolName: string; args: unknown };
@@ -56,6 +82,51 @@ const backendUrl =
   process.env.NEXT_PUBLIC_BACKEND_URL ?? process.env.NEXT_PUBLIC_EXPRESS_BACKEND_URL ?? "http://localhost:3001";
 
 const PRIORITY_LABELS: Record<number, string> = { 1: "Normal", 2: "Medium", 3: "High", 4: "Urgent" };
+
+type PriorityLevel = 1 | 2 | 3 | 4;
+
+function priorityStyleKey(p: number): PriorityLevel {
+  return p === 1 || p === 2 || p === 3 || p === 4 ? p : 1;
+}
+
+/** Badge colours: P1 neutral (theme), P2 blue, P3 amber, P4 red */
+const PRIORITY_BADGE_STYLES: Record<PriorityLevel, string> = {
+  1: "border-border bg-muted/90 text-card-foreground",
+  2: "border-sky-500/45 bg-sky-600/22 text-sky-50 dark:border-sky-400/50 dark:bg-sky-500/25 dark:text-sky-50",
+  3: "border-amber-500/50 bg-amber-600/24 text-amber-50 dark:border-amber-400/55 dark:bg-amber-500/28 dark:text-amber-50",
+  4: "border-red-500/50 bg-red-600/28 text-red-50 dark:border-red-400/55 dark:bg-red-500/30 dark:text-red-50",
+};
+
+const PRIORITY_TOGGLE_ON: Record<PriorityLevel, string> = {
+  1: "border-border bg-secondary text-secondary-foreground shadow-sm ring-2 ring-primary/30",
+  2: "border-sky-400/70 bg-sky-600/50 text-white shadow-sm ring-2 ring-sky-400/35",
+  3: "border-amber-400/70 bg-amber-600/48 text-white shadow-sm ring-2 ring-amber-400/40",
+  4: "border-red-400/70 bg-red-600/52 text-white shadow-sm ring-2 ring-red-400/40",
+};
+
+const PRIORITY_TOGGLE_OFF: Record<PriorityLevel, string> = {
+  1: "border-border/80 bg-muted/50 text-muted-foreground hover:bg-muted",
+  2: "border-sky-500/35 bg-sky-500/12 text-sky-200/95 hover:bg-sky-500/20 dark:text-sky-100",
+  3: "border-amber-500/38 bg-amber-500/12 text-amber-200/95 hover:bg-amber-500/20 dark:text-amber-100",
+  4: "border-red-500/38 bg-red-500/12 text-red-200/95 hover:bg-red-500/20 dark:text-red-100",
+};
+
+function PriorityBadge({ priority, className }: { priority: number; className?: string }) {
+  const key = priorityStyleKey(priority);
+  const label = PRIORITY_LABELS[priority] ?? `P${priority}`;
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "inline-flex h-7 w-fit shrink-0 items-center rounded-md px-2.5 py-0 text-sm font-medium tabular-nums leading-none",
+        PRIORITY_BADGE_STYLES[key],
+        className
+      )}
+    >
+      {priority} · {label}
+    </Badge>
+  );
+}
 
 /** Format due for display: weekday (3-letter) + date + time when available, else date only (no time). */
 function formatDueForDisplay(task: TaskItem): string {
@@ -141,12 +212,31 @@ function formatGroupHeaderDate(d: Date): string {
   return d.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
 }
 
-/** End of current week (Sunday) as YYYY-MM-DD. */
-function endOfThisWeekStr(): string {
-  const d = new Date();
-  const daysUntilSunday = (7 - d.getDay()) % 7;
-  d.setDate(d.getDate() + daysUntilSunday);
-  return d.toISOString().slice(0, 10);
+/** Local calendar date as YYYY-MM-DD (avoids UTC shifts from toISOString). */
+function localDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Monday 00:00 local of the ISO-style week (week starts Monday, ends Sunday). JS getDay: Sun=0 … Sat=6. */
+function startOfWeekMonday(d: Date): Date {
+  const c = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const daysFromMonday = (c.getDay() + 6) % 7;
+  c.setDate(c.getDate() - daysFromMonday);
+  return c;
+}
+
+/** Sunday of the same Monday–Sunday week as `d`. */
+function endOfWeekSunday(d: Date): Date {
+  const mon = startOfWeekMonday(d);
+  return new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
+}
+
+/** Sunday of the current local week, YYYY-MM-DD (for grouping / labels). */
+function sundayOfCurrentWeekStr(): string {
+  return localDateStr(endOfWeekSunday(new Date()));
 }
 
 function splitUpcoming(upcoming: TaskItem[]): {
@@ -154,12 +244,10 @@ function splitUpcoming(upcoming: TaskItem[]): {
   thisWeek: TaskItem[];
   future: TaskItem[];
 } {
-  const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
-  const endOfWeek = endOfThisWeekStr();
+  const now = new Date();
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const tomorrowStr = localDateStr(tomorrow);
+  const weekSundayStr = sundayOfCurrentWeekStr();
 
   const tomorrowTasks: TaskItem[] = [];
   const thisWeekTasks: TaskItem[] = [];
@@ -172,7 +260,7 @@ function splitUpcoming(upcoming: TaskItem[]): {
       continue;
     }
     if (due === tomorrowStr) tomorrowTasks.push(task);
-    else if (due > tomorrowStr && due <= endOfWeek) thisWeekTasks.push(task);
+    else if (due > tomorrowStr && due <= weekSundayStr) thisWeekTasks.push(task);
     else futureTasks.push(task);
   }
 
@@ -188,7 +276,7 @@ function TasksSection({
   dateBadge,
   count,
   tasks,
-  defaultOpen = true,
+  defaultOpen = false,
   open,
   onOpenChange,
   renderTaskRow,
@@ -232,6 +320,32 @@ function TasksSection({
           </div>
         </CollapsibleContent>
       </Collapsible>
+    </div>
+  );
+}
+
+function TaskDetailRow({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 flex-row flex-wrap items-center gap-x-2 gap-y-1.5 sm:flex-nowrap",
+        className
+      )}
+    >
+      <span className="w-[5.75rem] shrink-0 self-center text-xs font-semibold uppercase leading-none tracking-wide text-muted-foreground sm:w-24">
+        {label}
+      </span>
+      <div className="min-w-0 flex-1 text-sm leading-snug text-foreground">
+        {children}
+      </div>
     </div>
   );
 }
@@ -310,17 +424,41 @@ export default function HomePage() {
   const [taskActionError, setTaskActionError] = useState<string | null>(null);
 
   const [selectedTask, setSelectedTask] = useState<TaskItem | null>(null);
+  const [panelContent, setPanelContent] = useState("");
+  const [panelDue, setPanelDue] = useState("");
+  const [panelDescription, setPanelDescription] = useState("");
+  const [panelPriority, setPanelPriority] = useState<number>(1);
+  const [panelSaving, setPanelSaving] = useState(false);
+  const [panelEditing, setPanelEditing] = useState(false);
+  const [panelCreating, setPanelCreating] = useState(false);
+  const [newTaskContext, setNewTaskContext] = useState<TaskContext>("personal");
   const [refineMessages, setRefineMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [refineInput, setRefineInput] = useState("");
   const [refineRunning, setRefineRunning] = useState(false);
   const [refineProposals, setRefineProposals] = useState<Proposal[]>([]);
   const [refineStreamingContent, setRefineStreamingContent] = useState("");
-  const [futureOpen, setFutureOpen] = useState(false);
-
   const [chatInput, setChatInput] = useState("");
   const [chatOutput, setChatOutput] = useState("");
   const [chatRunning, setChatRunning] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEventDto[]>([]);
+  const [calendarConfigured, setCalendarConfigured] = useState<CalendarConfigured>({
+    personal: false,
+    work: false,
+  });
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+
+  /** Local calendar day for the Schedule (single-day) tab; default is today. */
+  const [scheduleDayDate, setScheduleDayDate] = useState(() => {
+    const t = new Date();
+    return new Date(t.getFullYear(), t.getMonth(), t.getDate());
+  });
+
+  const shiftScheduleDay = useCallback((deltaDays: number) => {
+    setScheduleDayDate((d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + deltaDays));
+  }, []);
 
   const refreshJobs = async () => {
     setJobsLoading(true);
@@ -374,19 +512,119 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    if (activeTab === "tasks") refreshTasks();
+    if (activeTab === "tasks" || activeTab === "schedule" || activeTab === "schedule-week") refreshTasks();
   }, [activeTab, refreshTasks]);
+
+  useEffect(() => {
+    if (activeTab !== "schedule-week") return;
+    const { dayDates } = getNextSevenDayRange(new Date());
+    const d0 = dayDates[0]!;
+    const d6 = dayDates[6]!;
+    const timeMin = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 0, 0, 0, 0);
+    const timeMax = new Date(d6.getFullYear(), d6.getMonth(), d6.getDate(), 23, 59, 59, 999);
+
+    const ac = new AbortController();
+    setCalendarLoading(true);
+    setCalendarError(null);
+    const url = `${backendUrl}/api/calendar/events?timeMin=${encodeURIComponent(timeMin.toISOString())}&timeMax=${encodeURIComponent(timeMax.toISOString())}`;
+    fetch(url, { signal: ac.signal })
+      .then(async (res) => {
+        const data = (await res.json()) as {
+          events?: CalendarEventDto[];
+          configured?: CalendarConfigured;
+          error?: string;
+        };
+        if (!res.ok) {
+          setCalendarError(data.error ?? `HTTP ${res.status}`);
+          setCalendarEvents([]);
+          setCalendarConfigured({ personal: false, work: false });
+          return;
+        }
+        setCalendarEvents(data.events ?? []);
+        setCalendarConfigured(data.configured ?? { personal: false, work: false });
+        if (data.error) setCalendarError(data.error);
+      })
+      .catch((e: unknown) => {
+        if (e instanceof Error && e.name === "AbortError") return;
+        setCalendarError(e instanceof Error ? e.message : String(e));
+        setCalendarEvents([]);
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setCalendarLoading(false);
+      });
+
+    return () => ac.abort();
+  }, [activeTab, backendUrl]);
+
+  useEffect(() => {
+    if (activeTab !== "schedule") return;
+    const d = scheduleDayDate;
+    const timeMin = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    const timeMax = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+
+    const ac = new AbortController();
+    setCalendarLoading(true);
+    setCalendarError(null);
+    const url = `${backendUrl}/api/calendar/events?timeMin=${encodeURIComponent(timeMin.toISOString())}&timeMax=${encodeURIComponent(timeMax.toISOString())}`;
+    fetch(url, { signal: ac.signal })
+      .then(async (res) => {
+        const data = (await res.json()) as {
+          events?: CalendarEventDto[];
+          configured?: CalendarConfigured;
+          error?: string;
+        };
+        if (!res.ok) {
+          setCalendarError(data.error ?? `HTTP ${res.status}`);
+          setCalendarEvents([]);
+          setCalendarConfigured({ personal: false, work: false });
+          return;
+        }
+        setCalendarEvents(data.events ?? []);
+        setCalendarConfigured(data.configured ?? { personal: false, work: false });
+        if (data.error) setCalendarError(data.error);
+      })
+      .catch((e: unknown) => {
+        if (e instanceof Error && e.name === "AbortError") return;
+        setCalendarError(e instanceof Error ? e.message : String(e));
+        setCalendarEvents([]);
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setCalendarLoading(false);
+      });
+
+    return () => ac.abort();
+  }, [activeTab, backendUrl, scheduleDayDate]);
+
+  const scheduleSevenDayTasks = tasksDataTasksInNextSevenDays(tasksData);
+  const scheduleDayTasks = tasksDataTasksForDateKey(tasksData, localDateStr(scheduleDayDate));
 
   useEffect(() => {
     setRefineMessages([]);
     setRefineProposals([]);
     setRefineStreamingContent("");
-  }, [selectedTask?.id]);
+  }, [selectedTask?.id, panelCreating]);
+
+  const selectedTaskKey = selectedTask ? `${selectedTask.context}:${selectedTask.id}` : "";
+  useEffect(() => {
+    if (panelCreating) return;
+    setPanelEditing(false);
+    if (!selectedTask) {
+      setPanelContent("");
+      setPanelDue("");
+      setPanelDescription("");
+      setPanelPriority(1);
+      return;
+    }
+    setPanelContent(selectedTask.content);
+    setPanelDue(taskToInitialDueString(selectedTask));
+    setPanelDescription(selectedTask.description ?? "");
+    setPanelPriority(selectedTask.priority);
+  }, [selectedTaskKey, selectedTask, panelCreating]);
 
   const startEditTask = (task: TaskItem) => {
     setEditingTaskId(task.id);
     setTaskEditContent(task.content);
-    setTaskEditDue(task.due?.date ?? task.due_string ?? "");
+    setTaskEditDue(taskToInitialDueString(task));
     setTaskActionError(null);
   };
 
@@ -397,7 +635,11 @@ export default function HomePage() {
     setTaskActionError(null);
   };
 
-  const saveTask = async (taskId: string, context: TaskContext) => {
+  const saveTask = async (
+    taskId: string,
+    context: TaskContext,
+    options?: { keepEditing?: boolean }
+  ) => {
     setTaskActionError(null);
     try {
       const res = await fetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
@@ -414,10 +656,151 @@ export default function HomePage() {
         setTaskActionError(json.error ?? "Update failed");
         return;
       }
-      cancelEditTask();
+      if (!options?.keepEditing) {
+        cancelEditTask();
+      }
       await refreshTasks();
+      setSelectedTask((prev) => {
+        if (!prev || prev.id !== taskId) return prev;
+        return {
+          ...prev,
+          content: taskEditContent.trim() || prev.content,
+          due_string: taskEditDue.trim() || prev.due_string,
+        };
+      });
     } catch (e) {
       setTaskActionError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const saveSelectedTaskPanel = async () => {
+    if (!selectedTask || panelSaving) return;
+    setTaskActionError(null);
+    setPanelSaving(true);
+    const taskId = selectedTask.id;
+    const context = selectedTask.context;
+    try {
+      const res = await fetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          context,
+          content: panelContent.trim() || undefined,
+          dueString: panelDue.trim() || undefined,
+          description: panelDescription.trim(),
+          priority: panelPriority,
+        }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setTaskActionError(json.error ?? "Update failed");
+        return;
+      }
+      await refreshTasks();
+      setSelectedTask((prev) => {
+        if (!prev || prev.id !== taskId || prev.context !== context) return prev;
+        return {
+          ...prev,
+          content: panelContent.trim() || prev.content,
+          due_string: panelDue.trim() || prev.due_string,
+          description: panelDescription.trim() || undefined,
+          priority: panelPriority,
+        };
+      });
+      setPanelEditing(false);
+    } catch (e) {
+      setTaskActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPanelSaving(false);
+    }
+  };
+
+  const resetPanelDraft = () => {
+    if (!selectedTask) return;
+    setPanelContent(selectedTask.content);
+    setPanelDue(taskToInitialDueString(selectedTask));
+    setPanelDescription(selectedTask.description ?? "");
+    setPanelPriority(selectedTask.priority);
+  };
+
+  const cancelPanelEdit = () => {
+    resetPanelDraft();
+    setPanelEditing(false);
+  };
+
+  const startNewTask = () => {
+    setSelectedTask(null);
+    setPanelCreating(true);
+    setPanelEditing(false);
+    setPanelContent("");
+    setPanelDue("");
+    setPanelDescription("");
+    setPanelPriority(1);
+    setNewTaskContext("personal");
+    setTaskActionError(null);
+    setRefineMessages([]);
+    setRefineProposals([]);
+    setRefineStreamingContent("");
+  };
+
+  const cancelPanelCreate = () => {
+    setPanelCreating(false);
+    setTaskActionError(null);
+  };
+
+  const saveNewTask = async () => {
+    if (!panelCreating || panelSaving) return;
+    const content = panelContent.trim();
+    if (!content) {
+      setTaskActionError("Add a task title before creating.");
+      return;
+    }
+    setTaskActionError(null);
+    setPanelSaving(true);
+    try {
+      const res = await fetch(`${backendUrl}/api/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          context: newTaskContext,
+          content,
+          dueString: panelDue.trim() || undefined,
+          priority: panelPriority,
+          description: panelDescription.trim() || undefined,
+        }),
+      });
+      const json = (await res.json()) as {
+        error?: string;
+        id?: string;
+        content?: string;
+        priority?: number;
+        description?: string;
+      };
+      if (!res.ok) {
+        setTaskActionError(json.error ?? "Could not create task");
+        return;
+      }
+      const id = json.id != null ? String(json.id) : null;
+      if (!id) {
+        setTaskActionError("Created task but response had no id. Refresh the list.");
+        await refreshTasks();
+        setPanelCreating(false);
+        return;
+      }
+      await refreshTasks();
+      setPanelCreating(false);
+      setSelectedTask({
+        id,
+        content: json.content ?? content,
+        context: newTaskContext,
+        priority: typeof json.priority === "number" ? json.priority : panelPriority,
+        description: json.description ?? (panelDescription.trim() || undefined),
+        due_string: panelDue.trim() || undefined,
+      });
+    } catch (e) {
+      setTaskActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPanelSaving(false);
     }
   };
 
@@ -594,18 +977,25 @@ export default function HomePage() {
 
   const applyRefineProposal = async (p: Proposal) => {
     if (!selectedTask) return;
-    const args = p.args as { context?: TaskContext; taskId?: string; content?: string; dueString?: string; priority?: number };
-    const taskId = args?.taskId ?? selectedTask.id;
-    const context = (args?.context as TaskContext) ?? selectedTask.context;
+    const raw = p.args as Record<string, unknown>;
+    const taskId = (typeof raw.taskId === "string" ? raw.taskId : typeof raw.task_id === "string" ? raw.task_id : undefined) ?? selectedTask.id;
+    const context = (raw.context as TaskContext | undefined) ?? selectedTask.context;
+    const content = typeof raw.content === "string" ? raw.content : undefined;
+    const dueString =
+      typeof raw.dueString === "string" ? raw.dueString : typeof raw.due_string === "string" ? raw.due_string : undefined;
+    const priority = typeof raw.priority === "number" ? raw.priority : undefined;
+    const description =
+      raw.description === null ? null : typeof raw.description === "string" ? raw.description : undefined;
     try {
       const res = await fetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           context,
-          ...(args?.content != null && { content: args.content }),
-          ...(args?.dueString != null && { dueString: args.dueString }),
-          ...(args?.priority != null && { priority: args.priority }),
+          ...(content != null && { content }),
+          ...(dueString != null && { dueString }),
+          ...(priority != null && { priority }),
+          ...(description !== undefined && { description: description === null ? "" : description }),
         }),
       });
       if (!res.ok) throw new Error(await res.text().catch(() => "Update failed"));
@@ -613,11 +1003,18 @@ export default function HomePage() {
       await refreshTasks();
       setSelectedTask((prev) => {
         if (!prev || prev.id !== taskId) return prev;
+        const nextDesc =
+          description === undefined
+            ? prev.description
+            : description === null || description === ""
+              ? undefined
+              : description;
         return {
           ...prev,
-          content: args?.content ?? prev.content,
-          due_string: args?.dueString ?? prev.due_string,
-          priority: args?.priority ?? prev.priority,
+          content: content ?? prev.content,
+          due_string: dueString ?? prev.due_string,
+          priority: priority ?? prev.priority,
+          description: nextDesc,
         };
       });
     } catch (e) {
@@ -631,28 +1028,45 @@ export default function HomePage() {
       return (
         <div
           key={`${task.context}-${task.id}`}
-          className="flex items-center gap-2 rounded-md border border-border bg-card p-2 text-card-foreground"
+          className="flex items-start gap-1.5 rounded-md border border-border bg-card p-1.5 text-card-foreground"
         >
           <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <Input
+            <textarea
               value={taskEditContent}
               onChange={(e) => setTaskEditContent(e.target.value)}
-              placeholder="Task content"
-              className="h-8 bg-background text-xs"
+              placeholder="Task name"
+              rows={2}
+              className="field-sizing-content min-h-[2.25rem] w-full resize-y rounded-md border border-input bg-background px-1.5 py-1 text-[11px] leading-snug outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
             />
-            <Input
+            <TaskDuePicker
               value={taskEditDue}
-              onChange={(e) => setTaskEditDue(e.target.value)}
-              placeholder="Due (e.g. today, 2025-03-20)"
-              className="h-8 bg-background text-xs"
+              onChange={setTaskEditDue}
+              onPopoverClose={() => {
+                void saveTask(task.id, task.context, { keepEditing: true });
+              }}
             />
           </div>
-          <div className="flex shrink-0 gap-1">
-            <Button size="sm" className="h-7 text-xs" onClick={() => saveTask(task.id, task.context)}>
-              Save
+          <div className="flex shrink-0 flex-col gap-0.5 pt-0.5" onClick={(e) => e.stopPropagation()}>
+            <Button
+              type="button"
+              size="icon-xs"
+              className="shrink-0"
+              aria-label="Save task"
+              title="Save"
+              onClick={() => saveTask(task.id, task.context)}
+            >
+              <CheckIcon className="size-3" />
             </Button>
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={cancelEditTask}>
-              Cancel
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-xs"
+              className="shrink-0"
+              aria-label="Cancel editing"
+              title="Cancel"
+              onClick={cancelEditTask}
+            >
+              <XIcon className="size-3" />
             </Button>
           </div>
         </div>
@@ -665,11 +1079,21 @@ export default function HomePage() {
         key={`${task.context}-${task.id}`}
         role="button"
         tabIndex={0}
-        onClick={() => setSelectedTask(task)}
-        onKeyDown={(e) => e.key === "Enter" && setSelectedTask(task)}
+        onClick={() => {
+          setSelectedTask(task);
+          setPanelCreating(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            setSelectedTask(task);
+            setPanelCreating(false);
+          }
+        }}
         className={cn(
           "flex cursor-pointer items-center gap-2 rounded-md border px-2 py-1.5 text-card-foreground transition-colors",
-          isSelected ? "border-primary bg-primary/10" : "border-border bg-card hover:bg-muted/50"
+          isSelected
+            ? "border-primary/55 bg-primary/[0.09] ring-1 ring-primary/20"
+            : "border-border bg-card hover:bg-muted/60"
         )}
       >
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -706,36 +1130,96 @@ export default function HomePage() {
     );
   };
 
+  const scheduleTabsFillHeight =
+    activeTab === "tasks" || activeTab === "schedule" || activeTab === "schedule-week";
+
   return (
     <div
       className={cn(
-        activeTab === "tasks" ? "mx-auto flex h-screen max-w-7xl flex-col overflow-hidden px-4" : "container"
+        "w-full px-6 pt-6 pb-4 lg:px-10",
+        scheduleTabsFillHeight && "flex h-screen min-h-0 flex-col overflow-hidden"
       )}
     >
       <Tabs
         value={activeTab}
         onValueChange={(v) => v != null && setActiveTab(v)}
-        className={cn("w-full", activeTab === "tasks" && "flex min-h-0 flex-1 flex-col")}
+        className={cn("w-full", scheduleTabsFillHeight && "flex min-h-0 flex-1 flex-col")}
       >
-        <TabsList variant="line" className="mb-5 w-fit shrink-0">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="tasks">Tasks</TabsTrigger>
-        </TabsList>
+        <div className="mb-2 flex min-h-11 shrink-0 items-center justify-between gap-4 border-b border-border">
+          <TabsList variant="line" className="mb-0 w-fit shrink-0 border-0">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="tasks">Tasks</TabsTrigger>
+            <TabsTrigger value="schedule">Schedule</TabsTrigger>
+            <TabsTrigger value="schedule-week">Next 7 days</TabsTrigger>
+          </TabsList>
+          <div className="flex shrink-0 items-center gap-2">
+            <ThemeToggle />
+            {activeTab === "tasks" ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1 px-2 text-xs"
+                  onClick={startNewTask}
+                >
+                  <PlusIcon className="size-3" aria-hidden />
+                  New
+                </Button>
+                {panelCreating ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={cancelPanelCreate}
+                  >
+                    Cancel
+                  </Button>
+                ) : null}
+                {selectedTask && panelEditing ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={cancelPanelEdit}
+                  >
+                    Cancel
+                  </Button>
+                ) : null}
+                {selectedTask && !panelCreating && !panelEditing ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1 px-2 text-xs"
+                    onClick={() => setPanelEditing(true)}
+                  >
+                    <PencilIcon className="size-3" aria-hidden />
+                    Edit
+                  </Button>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        </div>
 
-        <TabsContent value="tasks" className="mt-0 min-h-0 flex-1 overflow-hidden flex flex-col">
-          <div className="grid min-h-0 flex-1 gap-4 md:grid-cols-[1fr_2fr]">
-            <Card className="flex h-full min-h-0 flex-col">
-              <CardHeader className="shrink-0">
-                <div className="flex items-center gap-2">
-                  <CardTitle>Tasks</CardTitle>
-                  {tasksRefreshing ? (
-                    <Loader2Icon className="size-4 animate-spin text-muted-foreground" aria-label="Updating tasks" />
-                  ) : null}
-                </div>
-                <p className="text-xs text-muted-foreground">Click a task to refine it with the assistant.</p>
-              </CardHeader>
+        <TabsContent value="tasks" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
+          <ResizablePanelGroup
+            orientation="horizontal"
+            className="min-h-0 flex-1 rounded-lg border border-border bg-muted/35 shadow-sm shadow-black/[0.07] ring-1 ring-black/[0.04] dark:border-border/60 dark:bg-muted/15 dark:shadow-none dark:ring-0"
+          >
+            <ResizablePanel id="tasks-list" defaultSize={32} minSize={18} className="min-w-0">
+              <Card className="flex h-full min-h-0 flex-col gap-3 rounded-none border-0 bg-transparent py-0 shadow-sm shadow-black/[0.05] ring-1 ring-border/50 dark:shadow-none dark:ring-0">
               <CardContent className="flex min-h-0 flex-1 flex-col p-4">
                 <div className="shrink-0 space-y-2">
+                  {tasksRefreshing ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2Icon className="size-4 shrink-0 animate-spin" aria-label="Updating tasks" />
+                      <span>Updating tasks…</span>
+                    </div>
+                  ) : null}
                   {tasksLoading ? (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2Icon className="size-4 animate-spin shrink-0" aria-hidden />
@@ -756,30 +1240,54 @@ export default function HomePage() {
                     const dueTodaySorted = [...tasksData.dueToday].sort(compareTasksByDue);
                     const today = new Date();
                     const todayLabel = formatGroupHeaderDate(today);
-                    const tomorrowDate = new Date(today);
-                    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+                    const tomorrowDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
                     const tomorrowLabel = formatGroupHeaderDate(tomorrowDate);
-                    const endOfWeekDate = new Date(endOfThisWeekStr() + "T12:00:00");
-                    const endOfWeekLabel = formatGroupHeaderDate(endOfWeekDate);
-                    const thisWeekStart = new Date(tomorrowDate);
-                    thisWeekStart.setDate(thisWeekStart.getDate() + 1);
-                    const thisWeekLabel = `${formatGroupHeaderDate(thisWeekStart)} – ${formatGroupHeaderDate(endOfWeekDate)}`;
+                    const weekMonday = startOfWeekMonday(today);
+                    const weekSunday = endOfWeekSunday(today);
+                    const thisWeekLabel = `${formatGroupHeaderDate(weekMonday)} – ${formatGroupHeaderDate(weekSunday)}`;
+                    const endOfWeekLabel = formatGroupHeaderDate(weekSunday);
                     return (
-                      <div className="flex min-h-0 flex-1 flex-col overflow-hidden pt-2">
+                      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                         <ScrollArea className="flex-1 min-h-0">
-                          <div className="flex flex-col gap-2 pb-2">
-                            <TasksSection title="Overdue" dateBadge={`< ${todayLabel}`} count={overdueSorted.length} tasks={overdueSorted} renderTaskRow={renderTaskRow} />
-                            <TasksSection title="Today" dateBadge={todayLabel} count={dueTodaySorted.length} tasks={dueTodaySorted} renderTaskRow={renderTaskRow} />
-                            <TasksSection title="Tomorrow" dateBadge={tomorrowLabel} count={tomorrow.length} tasks={tomorrow} renderTaskRow={renderTaskRow} />
-                            <TasksSection title="This week" dateBadge={thisWeekLabel} count={thisWeek.length} tasks={thisWeek} renderTaskRow={renderTaskRow} />
+                          <div className="flex flex-col gap-2 pb-1 pr-4">
+                            <TasksSection
+                              title="Overdue"
+                              dateBadge={`< ${todayLabel}`}
+                              count={overdueSorted.length}
+                              tasks={overdueSorted}
+                              defaultOpen={overdueSorted.length > 0}
+                              renderTaskRow={renderTaskRow}
+                            />
+                            <TasksSection
+                              title="Today"
+                              dateBadge={todayLabel}
+                              count={dueTodaySorted.length}
+                              tasks={dueTodaySorted}
+                              defaultOpen={dueTodaySorted.length > 0}
+                              renderTaskRow={renderTaskRow}
+                            />
+                            <TasksSection
+                              title="Tomorrow"
+                              dateBadge={tomorrowLabel}
+                              count={tomorrow.length}
+                              tasks={tomorrow}
+                              defaultOpen={tomorrow.length > 0}
+                              renderTaskRow={renderTaskRow}
+                            />
+                            <TasksSection
+                              title="This week"
+                              dateBadge={thisWeekLabel}
+                              count={thisWeek.length}
+                              tasks={thisWeek}
+                              defaultOpen={thisWeek.length > 0}
+                              renderTaskRow={renderTaskRow}
+                            />
                             <TasksSection
                               title="Future"
                               dateBadge={`> ${endOfWeekLabel}`}
                               count={future.length}
                               tasks={future}
-                              defaultOpen={false}
-                              open={futureOpen}
-                              onOpenChange={setFutureOpen}
+                              defaultOpen={future.length > 0}
                               renderTaskRow={renderTaskRow}
                             />
                           </div>
@@ -790,65 +1298,227 @@ export default function HomePage() {
                 ) : null}
               </CardContent>
             </Card>
-
-            <Card className="flex h-full min-h-0 flex-col overflow-hidden">
-              <CardHeader className="shrink-0">
-                <CardTitle className="text-base">Refine with assistant</CardTitle>
-                {selectedTask ? (
+            </ResizablePanel>
+            <ResizableHandle withHandle className="w-2 max-w-2 shrink-0 bg-border/70" />
+            <ResizablePanel id="tasks-detail" defaultSize={68} minSize={25} className="min-w-0">
+            <Card className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-none border-0 bg-transparent py-0 shadow-sm shadow-black/[0.05] ring-1 ring-border/50 dark:shadow-none dark:ring-0">
+              <CardContent
+                className={cn(
+                  "flex min-h-0 flex-1 flex-col gap-3 p-4",
+                  (selectedTask || panelCreating) && "overflow-hidden"
+                )}
+              >
+                {selectedTask || panelCreating ? (
                   <>
-                    <div className="rounded-md border border-border bg-muted/30 p-3 text-sm space-y-2">
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Title</p>
-                        <p className="font-medium mt-0.5">{selectedTask.content}</p>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div>
-                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Due</p>
-                          <Badge variant="outline" className="text-xs font-normal mt-0.5">
-                            <CalendarIcon className="mr-1 size-3" />
-                            {formatDueForDisplay(selectedTask)}
-                          </Badge>
+                    {/* Border on outer shell; only description scrolls inside */}
+                    <div className="flex max-h-[50%] min-h-0 shrink-0 flex-col overflow-hidden rounded-md border border-border bg-muted/30 shadow-sm ring-1 ring-border/40">
+                      <div className="shrink-0 space-y-3 p-3 pb-2">
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-x-6 md:gap-y-3 md:items-start">
+                          <TaskDetailRow label="Task ID">
+                            {panelCreating ? (
+                              <span className="text-sm text-muted-foreground">—</span>
+                            ) : (
+                              <Badge
+                                variant="outline"
+                                title="Task ID cannot be edited"
+                                className="inline-flex h-auto min-h-7 w-fit max-w-full items-center justify-start rounded-md px-2.5 py-1 font-mono text-xs font-normal leading-snug text-foreground whitespace-normal break-all [overflow-wrap:anywhere]"
+                              >
+                                {selectedTask!.id}
+                              </Badge>
+                            )}
+                          </TaskDetailRow>
+                          <TaskDetailRow label="Context">
+                            {panelCreating ? (
+                              <div className="flex flex-wrap gap-1">
+                                {(["personal", "work"] as const).map((ctx) => (
+                                  <Button
+                                    key={ctx}
+                                    type="button"
+                                    size="xs"
+                                    variant="outline"
+                                    className={cn(
+                                      "h-7 rounded-full border px-2.5 text-xs font-semibold capitalize transition-colors",
+                                      newTaskContext === ctx
+                                        ? "border-primary bg-primary/15 text-foreground shadow-sm ring-2 ring-primary/25"
+                                        : "border-border/80 bg-muted/50 text-muted-foreground hover:bg-muted"
+                                    )}
+                                    onClick={() => setNewTaskContext(ctx)}
+                                  >
+                                    {ctx}
+                                  </Button>
+                                ))}
+                              </div>
+                            ) : (
+                              <Badge
+                                variant="outline"
+                                className="inline-flex h-7 w-fit shrink-0 items-center px-2.5 py-0 text-sm font-medium capitalize leading-none rounded-md"
+                              >
+                                {selectedTask!.context}
+                              </Badge>
+                            )}
+                          </TaskDetailRow>
+                          {panelEditing || panelCreating ? (
+                            <>
+                              <TaskDetailRow label="Due">
+                                <TaskDuePicker
+                                  value={panelDue}
+                                  onChange={setPanelDue}
+                                  className="max-w-full"
+                                  comfortableTrigger
+                                />
+                              </TaskDetailRow>
+                              <TaskDetailRow label="Priority">
+                                <div className="flex flex-wrap gap-1">
+                                  {([1, 2, 3, 4] as const).map((p) => (
+                                    <Button
+                                      key={p}
+                                      type="button"
+                                      size="xs"
+                                      variant="outline"
+                                      className={cn(
+                                        "h-7 rounded-full border px-2.5 text-xs font-semibold transition-colors",
+                                        panelPriority === p ? PRIORITY_TOGGLE_ON[p] : PRIORITY_TOGGLE_OFF[p]
+                                      )}
+                                      onClick={() => setPanelPriority(p)}
+                                    >
+                                      {p} · {PRIORITY_LABELS[p]}
+                                    </Button>
+                                  ))}
+                                </div>
+                              </TaskDetailRow>
+                              <TaskDetailRow label="Content" className="md:col-span-2">
+                                <textarea
+                                  value={panelContent}
+                                  onChange={(e) => setPanelContent(e.target.value)}
+                                  rows={3}
+                                  className="field-sizing-content min-h-[4rem] w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 text-sm leading-snug outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                                  placeholder="Task title"
+                                />
+                              </TaskDetailRow>
+                            </>
+                          ) : (
+                            <>
+                              <TaskDetailRow label="Due">
+                                <Badge
+                                  variant="outline"
+                                  className="inline-flex h-7 w-fit shrink-0 items-center gap-1.5 rounded-md px-2.5 py-0 text-sm font-normal leading-none"
+                                >
+                                  <CalendarIcon className="size-3.5 shrink-0 opacity-80" />
+                                  {formatDueForDisplay(selectedTask!)}
+                                </Badge>
+                              </TaskDetailRow>
+                              <TaskDetailRow label="Priority">
+                                <PriorityBadge priority={selectedTask!.priority} />
+                              </TaskDetailRow>
+                              <TaskDetailRow label="Content" className="md:col-span-2">
+                                <p className="whitespace-pre-wrap text-sm font-normal leading-snug text-foreground">
+                                  {selectedTask!.content}
+                                </p>
+                              </TaskDetailRow>
+                            </>
+                          )}
                         </div>
-                        <div>
-                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Priority</p>
-                          <span className="text-xs mt-0.5 inline-block">
-                            {PRIORITY_LABELS[selectedTask.priority] ?? `P${selectedTask.priority}`}
+                      </div>
+                      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-t border-border/50 px-3 py-2">
+                        {/* items-stretch so the value column gets a bounded height; label uses self-start */}
+                        <div className="flex min-h-0 min-w-0 flex-1 flex-row gap-x-2 gap-y-1.5">
+                          <span className="w-[5.75rem] shrink-0 self-start pt-0.5 text-xs font-semibold uppercase leading-none tracking-wide text-muted-foreground sm:w-24">
+                            Description
                           </span>
+                          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]">
+                            {panelEditing || panelCreating ? (
+                              <textarea
+                                value={panelDescription}
+                                onChange={(e) => setPanelDescription(e.target.value)}
+                                rows={6}
+                                className="min-h-[8rem] w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 text-sm leading-snug outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                                placeholder="Optional — markdown supported in Todoist"
+                              />
+                            ) : selectedTask!.description ? (
+                              <div className="min-w-0 max-w-full text-sm font-normal leading-snug text-foreground [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:first:mt-0 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:my-0.5">
+                                <MessageResponse>{selectedTask!.description}</MessageResponse>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">No description</p>
+                            )}
+                          </div>
                         </div>
                       </div>
-                      {selectedTask.description ? (
-                        <div>
-                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Description</p>
-                          <p className="mt-0.5 text-xs text-muted-foreground whitespace-pre-wrap">{selectedTask.description}</p>
+                      {panelCreating ? (
+                        <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border/80 px-3 py-3">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-7 text-xs"
+                            disabled={panelSaving}
+                            onClick={() => void saveNewTask()}
+                          >
+                            {panelSaving ? (
+                              <>
+                                <Loader2Icon className="mr-1 size-3.5 animate-spin" aria-hidden />
+                                Creating…
+                              </>
+                            ) : (
+                              "Create task"
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            disabled={panelSaving}
+                            onClick={cancelPanelCreate}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : panelEditing ? (
+                        <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border/80 px-3 py-3">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-7 text-xs"
+                            disabled={panelSaving}
+                            onClick={() => void saveSelectedTaskPanel()}
+                          >
+                            {panelSaving ? (
+                              <>
+                                <Loader2Icon className="mr-1 size-3.5 animate-spin" aria-hidden />
+                                Saving…
+                              </>
+                            ) : (
+                              "Save changes"
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            disabled={panelSaving}
+                            onClick={cancelPanelEdit}
+                          >
+                            Cancel
+                          </Button>
                         </div>
                       ) : null}
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Ask for more context or suggest improvements; the assistant can update the task. Prefer due date and time when refining.
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Select a task from the list to refine it with the assistant.
-                  </p>
-                )}
-              </CardHeader>
-              <CardContent className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-                {selectedTask ? (
-                  <>
-                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
+                    {!panelCreating ? (
+                    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm ring-1 ring-border/40">
                       <Conversation className="min-h-0 flex-1 overflow-y-auto">
                         <ConversationContent className="gap-4 p-3">
                           {refineMessages.length === 0 && !refineStreamingContent ? (
-                            <div className="flex flex-col gap-2">
+                            <div className="flex flex-col items-center gap-3">
                               <ConversationEmptyState
                                 icon={<MessageSquare className="size-12 text-muted-foreground" />}
                                 title="Refine this task"
-                                description="Send a message or use the button below to get an analysis and suggested updates."
+                                description=""
                               />
                               <Button
                                 type="button"
-                                variant="secondary"
+                                variant="default"
                                 size="sm"
                                 className="w-fit"
                                 disabled={refineRunning}
@@ -869,6 +1539,21 @@ export default function HomePage() {
                             <Message from="assistant">
                               <MessageContent>
                                 <MessageResponse>{refineStreamingContent}</MessageResponse>
+                              </MessageContent>
+                            </Message>
+                          ) : null}
+                          {refineRunning && !refineStreamingContent ? (
+                            <Message from="assistant">
+                              <MessageContent>
+                                <div
+                                  className="flex items-center gap-2 text-sm text-muted-foreground"
+                                  role="status"
+                                  aria-live="polite"
+                                  aria-label="Assistant is responding"
+                                >
+                                  <Loader2Icon className="size-4 shrink-0 animate-spin" aria-hidden />
+                                  <span>Thinking…</span>
+                                </div>
                               </MessageContent>
                             </Message>
                           ) : null}
@@ -918,23 +1603,116 @@ export default function HomePage() {
                         {refineRunning ? "..." : "Send"}
                       </Button>
                     </form>
+                    </div>
+                    ) : (
+                    <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 p-6 text-center">
+                      <MessageSquare className="size-10 text-muted-foreground opacity-80" />
+                      <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                        Create the task above, then you can refine it with the assistant here.
+                      </p>
+                    </div>
+                    )}
                   </>
                 ) : (
                   <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg border border-border bg-muted/20 p-6 text-center">
-                    <MessageSquare className="size-12 text-muted-foreground" />
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Select a task from the list to refine it with the assistant.
-                    </p>
+                    <MessageSquare className="size-12 text-muted-foreground opacity-60" aria-hidden />
+                    <span className="sr-only">No task selected</span>
                   </div>
                 )}
               </CardContent>
             </Card>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </TabsContent>
+
+        <TabsContent value="schedule" className="mt-0 flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+            <div className="shrink-0 space-y-2">
+              {tasksRefreshing ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2Icon className="size-4 shrink-0 animate-spin" aria-label="Updating tasks" />
+                  <span>Updating tasks…</span>
+                </div>
+              ) : null}
+              {tasksLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2Icon className="size-4 shrink-0 animate-spin" aria-hidden />
+                  <span>Loading tasks...</span>
+                </div>
+              ) : null}
+              {tasksData?.error ? (
+                <p className="text-sm text-destructive">{tasksData.error}</p>
+              ) : null}
+            </div>
+            {!tasksLoading && tasksData && !tasksData.error ? (
+              <ScheduleOneDayView
+                className="min-h-0 flex-1"
+                dayDate={scheduleDayDate}
+                onPrevDay={() => shiftScheduleDay(-1)}
+                onNextDay={() => shiftScheduleDay(1)}
+                tasks={scheduleDayTasks}
+                calendarEvents={calendarEvents}
+                calendarLoading={calendarLoading}
+                calendarError={calendarError}
+                calendarConfigured={calendarConfigured}
+                onAddTask={() => {
+                  setActiveTab("tasks");
+                  startNewTask();
+                }}
+                onSelectTask={(t) => {
+                  setActiveTab("tasks");
+                  setPanelCreating(false);
+                  setSelectedTask(t as TaskItem);
+                }}
+              />
+            ) : null}
           </div>
         </TabsContent>
 
-        <TabsContent value="overview" className="mt-0">
-          <div className="grid gap-4 md:grid-cols-[1.2fr_0.9fr]">
-            <Card className="flex max-w-4xl flex-col overflow-hidden">
+        <TabsContent value="schedule-week" className="mt-0 flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+            <div className="shrink-0 space-y-2">
+              {tasksRefreshing ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2Icon className="size-4 shrink-0 animate-spin" aria-label="Updating tasks" />
+                  <span>Updating tasks…</span>
+                </div>
+              ) : null}
+              {tasksLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2Icon className="size-4 shrink-0 animate-spin" aria-hidden />
+                  <span>Loading tasks...</span>
+                </div>
+              ) : null}
+              {tasksData?.error ? (
+                <p className="text-sm text-destructive">{tasksData.error}</p>
+              ) : null}
+            </div>
+            {!tasksLoading && tasksData && !tasksData.error ? (
+              <ScheduleSevenDayView
+                className="min-h-0 flex-1"
+                tasks={scheduleSevenDayTasks}
+                calendarEvents={calendarEvents}
+                calendarLoading={calendarLoading}
+                calendarError={calendarError}
+                calendarConfigured={calendarConfigured}
+                onAddTask={() => {
+                  setActiveTab("tasks");
+                  startNewTask();
+                }}
+                onSelectTask={(t) => {
+                  setActiveTab("tasks");
+                  setPanelCreating(false);
+                  setSelectedTask(t as TaskItem);
+                }}
+              />
+            ) : null}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="overview" className="mt-0 w-full min-w-0">
+          <div className="grid min-w-0 gap-6 md:grid-cols-[1.2fr_0.9fr]">
+            <Card className="flex min-w-0 flex-col overflow-hidden">
               <CardHeader>
                 <CardTitle>Assistant Chat</CardTitle>
               </CardHeader>
@@ -968,7 +1746,7 @@ export default function HomePage() {
                       e.preventDefault();
                       runAssistantPropose().catch(() => null);
                     }}
-                    className="relative mx-auto mt-4 w-full max-w-2xl"
+                    className="relative mt-4 w-full min-w-0"
                   >
                     <textarea
                       value={chatInput}
@@ -996,7 +1774,7 @@ export default function HomePage() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Approval Queue</CardTitle>
               </CardHeader>
@@ -1060,7 +1838,7 @@ export default function HomePage() {
             </Card>
           </div>
 
-          <Card className="mt-4">
+          <Card className="mt-4 min-w-0">
             <CardHeader>
               <CardTitle>Trigger Runs</CardTitle>
             </CardHeader>
