@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="Sherpa">
+  <rect width="32" height="32" rx="8" fill="#0f172a"/>
+  <path
+    fill="#38bdf8"
+    d="M6 25 13 11l3.5 5L22 8l4 17H6Z"
+  />
+  <path
+    fill="#e0f2fe"
+    fill-opacity="0.35"
+    d="M13 11 16 16l3-8 3 17H6l7-14Z"
+  />
+</svg>

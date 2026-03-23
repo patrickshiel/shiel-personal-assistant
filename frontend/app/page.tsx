@@ -377,6 +377,16 @@ function proposalActionLabel(p: Proposal): string {
     const rel = typeof args.relativePath === "string" ? args.relativePath : "";
     if (rel) return `${p.toolName} · ${rel}`;
   }
+  if (p.toolName === "calendar_create_event") {
+    const s = typeof args.summary === "string" ? args.summary : "";
+    if (s) return `${p.toolName} · ${s.length > 56 ? `${s.slice(0, 56)}…` : s}`;
+  }
+  if (p.toolName === "calendar_update_event") {
+    const s = typeof args.summary === "string" ? args.summary : "";
+    const id = typeof args.eventId === "string" ? args.eventId : "";
+    if (s) return `${p.toolName} · ${s.length > 40 ? `${s.slice(0, 40)}…` : s}`;
+    if (id) return `${p.toolName} · ${id.length > 48 ? `${id.slice(0, 48)}…` : id}`;
+  }
   return p.toolName;
 }
 
@@ -926,6 +936,48 @@ export default function HomePage() {
     }
   };
 
+  const refreshCalendarForActiveTab = useCallback(async () => {
+    if (activeTab !== "schedule" && activeTab !== "schedule-week") return;
+    setCalendarLoading(true);
+    setCalendarError(null);
+    try {
+      let timeMin: Date;
+      let timeMax: Date;
+      if (activeTab === "schedule") {
+        const d = scheduleDayDate;
+        timeMin = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+        timeMax = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+      } else {
+        const { dayDates } = getNextSevenDayRange(new Date());
+        const d0 = dayDates[0]!;
+        const d6 = dayDates[6]!;
+        timeMin = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 0, 0, 0, 0);
+        timeMax = new Date(d6.getFullYear(), d6.getMonth(), d6.getDate(), 23, 59, 59, 999);
+      }
+      const url = `${backendUrl}/api/calendar/events?timeMin=${encodeURIComponent(timeMin.toISOString())}&timeMax=${encodeURIComponent(timeMax.toISOString())}`;
+      const res = await fetch(url);
+      const data = (await res.json()) as {
+        events?: CalendarEventDto[];
+        configured?: CalendarConfigured;
+        error?: string;
+      };
+      if (!res.ok) {
+        setCalendarError(data.error ?? `HTTP ${res.status}`);
+        setCalendarEvents([]);
+        setCalendarConfigured({ personal: false, work: false });
+        return;
+      }
+      setCalendarEvents(data.events ?? []);
+      setCalendarConfigured(data.configured ?? { personal: false, work: false });
+      if (data.error) setCalendarError(data.error);
+    } catch (e) {
+      setCalendarError(e instanceof Error ? e.message : String(e));
+      setCalendarEvents([]);
+    } finally {
+      setCalendarLoading(false);
+    }
+  }, [activeTab, backendUrl, scheduleDayDate]);
+
   const runScheduleDayAssistant = async () => {
     const message = scheduleChatInput.trim();
     if (!message) return;
@@ -1052,12 +1104,108 @@ export default function HomePage() {
     }
   };
 
+  const applyCalendarProposalFromTool = async (
+    p: Proposal,
+    opts: {
+      onSuccess: () => void;
+      setApplyError: (msg: string | null) => void;
+      refreshCalendar?: () => Promise<void>;
+    }
+  ) => {
+    opts.setApplyError(null);
+    try {
+      const raw = p.args as Record<string, unknown>;
+      const readContext = (): TaskContext | undefined => {
+        const c = raw.context as string | undefined;
+        return c === "personal" || c === "work" ? c : undefined;
+      };
+
+      if (p.toolName === "calendar_create_event") {
+        const context = readContext();
+        const summary = typeof raw.summary === "string" ? raw.summary.trim() : "";
+        const start = typeof raw.start === "string" ? raw.start : "";
+        const end = typeof raw.end === "string" ? raw.end : "";
+        if (!context || !summary || !start || !end) {
+          opts.setApplyError("Calendar create proposal is missing context, summary, start, or end.");
+          return;
+        }
+        const body: Record<string, unknown> = { context, summary, start, end };
+        const calId = typeof raw.calendarId === "string" ? raw.calendarId.trim() : "";
+        if (calId) body.calendarId = calId;
+        if (typeof raw.description === "string" && raw.description) body.description = raw.description;
+        if (Array.isArray(raw.attendees)) body.attendees = raw.attendees;
+        const res = await fetch(`${backendUrl}/api/calendar/create`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        let json: { error?: string } = {};
+        try {
+          json = (await res.json()) as { error?: string };
+        } catch {
+          /* empty */
+        }
+        if (!res.ok) throw new Error(json.error ?? "Calendar create failed");
+        opts.onSuccess();
+        await opts.refreshCalendar?.();
+        return;
+      }
+
+      if (p.toolName === "calendar_update_event") {
+        const context = readContext();
+        const eventId = typeof raw.eventId === "string" ? raw.eventId.trim() : "";
+        if (!context || !eventId) {
+          opts.setApplyError("Calendar update proposal is missing context or eventId.");
+          return;
+        }
+        const summary = typeof raw.summary === "string" ? raw.summary : undefined;
+        const start = typeof raw.start === "string" ? raw.start : undefined;
+        const end = typeof raw.end === "string" ? raw.end : undefined;
+        if (!summary?.trim() && !start?.trim() && !end?.trim()) {
+          opts.setApplyError("Calendar update proposal must include summary, start, or end.");
+          return;
+        }
+        const body: Record<string, unknown> = { context, eventId };
+        const calId = typeof raw.calendarId === "string" ? raw.calendarId.trim() : "";
+        if (calId) body.calendarId = calId;
+        if (summary != null && summary.trim()) body.summary = summary;
+        if (start != null && start.trim()) body.start = start;
+        if (end != null && end.trim()) body.end = end;
+        const res = await fetch(`${backendUrl}/api/calendar/update`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        let json: { error?: string } = {};
+        try {
+          json = (await res.json()) as { error?: string };
+        } catch {
+          /* empty */
+        }
+        if (!res.ok) throw new Error(json.error ?? "Calendar update failed");
+        opts.onSuccess();
+        await opts.refreshCalendar?.();
+        return;
+      }
+    } catch (e) {
+      opts.setApplyError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const applyScheduleChatProposal = async (p: Proposal) => {
     setScheduleChatApplyError(null);
     if (p.toolName === "obsidian_write_note" || p.toolName === "obsidian_append_to_note") {
       await applyObsidianProposalFromTool(p, {
         onSuccess: () => setScheduleChatProposals((prev) => prev.filter((x) => x.id !== p.id)),
         setApplyError: setScheduleChatApplyError,
+      });
+      return;
+    }
+    if (p.toolName === "calendar_create_event" || p.toolName === "calendar_update_event") {
+      await applyCalendarProposalFromTool(p, {
+        onSuccess: () => setScheduleChatProposals((prev) => prev.filter((x) => x.id !== p.id)),
+        setApplyError: setScheduleChatApplyError,
+        refreshCalendar: refreshCalendarForActiveTab,
       });
       return;
     }
@@ -1267,6 +1415,14 @@ export default function HomePage() {
       await applyObsidianProposalFromTool(p, {
         onSuccess: () => setRefineProposals((prev) => prev.filter((x) => x.id !== p.id)),
         setApplyError: setTaskActionError,
+      });
+      return;
+    }
+    if (p.toolName === "calendar_create_event" || p.toolName === "calendar_update_event") {
+      await applyCalendarProposalFromTool(p, {
+        onSuccess: () => setRefineProposals((prev) => prev.filter((x) => x.id !== p.id)),
+        setApplyError: setTaskActionError,
+        refreshCalendar: refreshCalendarForActiveTab,
       });
       return;
     }

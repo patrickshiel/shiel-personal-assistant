@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import "./globals.css";
 import { IBM_Plex_Sans } from "next/font/google";
 import { cn } from "@/lib/utils";
@@ -11,9 +12,13 @@ const ibmPlexSans = IBM_Plex_Sans({
   display: "swap",
 });
 
-export const metadata = {
-  title: "Shiel Assistant",
-  description: "AI-native personal assistant UI",
+export const metadata: Metadata = {
+  title: "Sherpa",
+  description: "Your guide for tasks, calendar, notes, and daily briefings.",
+  icons: {
+    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
+    apple: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

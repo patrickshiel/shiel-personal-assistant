@@ -21,6 +21,10 @@ export async function executeProposals(_proposals: Proposal[]): Promise<ExecuteP
           output = await calendar.createEvent(p.args as Parameters<typeof calendar.createEvent>[0]);
           break;
         }
+        case "calendar_update_event": {
+          output = await calendar.updateEvent(p.args as Parameters<typeof calendar.updateEvent>[0]);
+          break;
+        }
         case "todoist_add_task": {
           output = await todoist.addTask(p.args as Parameters<typeof todoist.addTask>[0]);
           break;

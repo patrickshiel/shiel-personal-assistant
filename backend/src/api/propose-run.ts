@@ -104,6 +104,8 @@ Below is the **complete** snapshot for that day. Use it to answer questions abou
 
 **Obsidian daily briefing:** When the user asks to save, brief, export, or put the rundown into a **daily note** (or similar), use **obsidian_write_note** or **obsidian_append_to_note** with markdown \`content\`. Prefer a path tied to this day: e.g. \`Daily/${dateKey}.md\` (relative to the vault; personal vault paths are auto-prefixed with \`Personal/\` by the tool). Use **context** \`personal\` or \`work\` to pick the vault. If the file may already exist, call **obsidian_read_note** first; if it exists and the user did not ask to replace it, use **obsidian_append_to_note** (e.g. a \`## Briefing\` section with a short timestamp) instead of overwriting.
 
+**Google Calendar:** To add or change events on this day, use **calendar_create_event** or **calendar_update_event**. Use **context** \`personal\` or \`work\` and **calendarId** \`primary\` for the main calendar. Event **id** values in the snapshot may be composite (\`personal:…\` or \`work:…\`); pass them as **eventId** for updates. Provide at least one of summary, start, or end when updating.
+
 --- Schedule snapshot ---
 
 ${scheduleMarkdown}`;

@@ -36,8 +36,8 @@ export const createEventSchema = z.object({
 
 export const updateEventSchema = z.object({
   context: contextSchema,
-  calendarId: z.string(),
-  eventId: z.string(),
+  calendarId: z.string().nullable().optional().describe('Usually "primary" for the main calendar'),
+  eventId: z.string().describe("Google event id, or composite personal:id / work:id from app listings"),
   summary: z.string().nullable().optional(),
   start: z.string().nullable().optional(),
   end: z.string().nullable().optional(),
@@ -45,7 +45,7 @@ export const updateEventSchema = z.object({
 
 export const deleteEventSchema = z.object({
   context: contextSchema,
-  calendarId: z.string(),
+  calendarId: z.string().nullable().optional(),
   eventId: z.string(),
 });
 
@@ -57,6 +57,19 @@ export type DeleteEventInput = z.infer<typeof deleteEventSchema>;
 
 function getContext(input: { context?: Context | null }): Context | undefined {
   return input.context ?? undefined;
+}
+
+/** App/API event ids are often `personal:googleEventId` or `work:googleEventId`; Google expects the bare id + matching OAuth context. */
+function parseCompositeEventId(
+  eventId: string,
+  contextFromInput: Context | undefined
+): { eventId: string; context: Context | undefined } {
+  const m = eventId.match(/^(personal|work):(.+)$/);
+  if (m) {
+    const prefixCtx = m[1] as Context;
+    return { eventId: m[2]!, context: prefixCtx };
+  }
+  return { eventId, context: contextFromInput };
 }
 
 export async function listEvents(input: ListEventsInput): Promise<string> {
@@ -156,7 +169,10 @@ export async function createEvent(input: CreateEventInput): Promise<string> {
 }
 
 export async function updateEvent(input: UpdateEventInput): Promise<string> {
-  const calendar = getCalendarClient(getContext(input));
+  const ctxFromInput = getContext(input);
+  const { eventId: googleEventId, context: fromComposite } = parseCompositeEventId(input.eventId, ctxFromInput);
+  const effectiveContext = fromComposite ?? ctxFromInput;
+  const calendar = getCalendarClient(effectiveContext);
   if (!calendar) {
     return JSON.stringify({ success: false, error: "Google Calendar not configured." });
   }
@@ -165,9 +181,12 @@ export async function updateEvent(input: UpdateEventInput): Promise<string> {
     if (input.summary) body.summary = input.summary;
     if (input.start) body.start = { dateTime: input.start };
     if (input.end) body.end = { dateTime: input.end };
+    if (Object.keys(body).length === 0) {
+      return JSON.stringify({ success: false, error: "At least one of summary, start, or end must be provided." });
+    }
     await calendar.events.patch({
-      calendarId: input.calendarId,
-      eventId: input.eventId,
+      calendarId: input.calendarId || "primary",
+      eventId: googleEventId,
       requestBody: body,
     });
     return JSON.stringify({ success: true });
@@ -177,14 +196,17 @@ export async function updateEvent(input: UpdateEventInput): Promise<string> {
 }
 
 export async function deleteEvent(input: DeleteEventInput): Promise<string> {
-  const calendar = getCalendarClient(getContext(input));
+  const ctxFromInput = getContext(input);
+  const { eventId: googleEventId, context: fromComposite } = parseCompositeEventId(input.eventId, ctxFromInput);
+  const effectiveContext = fromComposite ?? ctxFromInput;
+  const calendar = getCalendarClient(effectiveContext);
   if (!calendar) {
     return JSON.stringify({ success: false, error: "Google Calendar not configured." });
   }
   try {
     await calendar.events.delete({
-      calendarId: input.calendarId,
-      eventId: input.eventId,
+      calendarId: input.calendarId || "primary",
+      eventId: googleEventId,
     });
     return JSON.stringify({ success: true });
   } catch (err) {

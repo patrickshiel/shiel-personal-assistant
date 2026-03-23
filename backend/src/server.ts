@@ -21,6 +21,7 @@ import { getStateDir } from "./lib/paths.js";
 import { getTasksGrouped } from "./api/tasks-api.js";
 import * as todoist from "./tools/todoist.js";
 import * as obsidian from "./tools/obsidian.js";
+import * as calendarTool from "./tools/calendar.js";
 import {
   isCalendarConfigured,
   listPrimaryCalendarEvents,
@@ -126,6 +127,25 @@ const obsidianAppendBody = z.object({
   content: z.string().min(1).max(500_000),
 });
 
+const calendarCreateApiBody = z.object({
+  context: z.enum(["personal", "work"]),
+  calendarId: z.string().min(1).max(200).optional(),
+  summary: z.string().min(1).max(5000),
+  description: z.string().max(20000).optional(),
+  start: z.string().min(1).max(80),
+  end: z.string().min(1).max(80),
+  attendees: z.array(z.string().email()).max(100).optional(),
+});
+
+const calendarUpdateApiBody = z.object({
+  context: z.enum(["personal", "work"]),
+  calendarId: z.string().min(1).max(200).optional(),
+  eventId: z.string().min(1).max(500),
+  summary: z.string().max(5000).optional(),
+  start: z.string().max(80).optional(),
+  end: z.string().max(80).optional(),
+});
+
 const taskRefineBody = z.object({
   task: z.object({
     id: z.string(),
@@ -218,6 +238,56 @@ app.get("/api/calendar/events", async (req, res) => {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[api/calendar/events]", err);
     res.status(500).json({ events: [], configured, error: message });
+  }
+});
+
+app.post("/api/calendar/create", async (req, res) => {
+  const body = calendarCreateApiBody.safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+  try {
+    const raw = await calendarTool.createEvent({
+      context: body.data.context,
+      calendarId: body.data.calendarId ?? null,
+      summary: body.data.summary,
+      description: body.data.description ?? null,
+      start: body.data.start,
+      end: body.data.end,
+      attendees: body.data.attendees ?? null,
+    });
+    const parsed = JSON.parse(String(raw)) as { success?: boolean; error?: string; id?: string; htmlLink?: string };
+    if (parsed?.error || parsed?.success === false) {
+      return res.status(400).json({ error: parsed.error ?? "Calendar create failed" });
+    }
+    res.status(201).json(parsed);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post("/api/calendar/update", async (req, res) => {
+  const body = calendarUpdateApiBody.safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+  if (!body.data.summary && !body.data.start && !body.data.end) {
+    return res.status(400).json({ error: "Provide at least one of summary, start, or end" });
+  }
+  try {
+    const raw = await calendarTool.updateEvent({
+      context: body.data.context,
+      calendarId: body.data.calendarId ?? "primary",
+      eventId: body.data.eventId,
+      summary: body.data.summary ?? null,
+      start: body.data.start ?? null,
+      end: body.data.end ?? null,
+    });
+    const parsed = JSON.parse(String(raw)) as { success?: boolean; error?: string };
+    if (parsed?.error || parsed?.success === false) {
+      return res.status(400).json({ error: parsed.error ?? "Calendar update failed" });
+    }
+    res.json(parsed);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });
 

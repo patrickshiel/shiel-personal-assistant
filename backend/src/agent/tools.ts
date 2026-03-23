@@ -35,8 +35,19 @@ export const calendarCreateEvent = tool(
   async (input: z.infer<typeof calendar.createEventSchema>) => calendar.createEvent(input),
   {
     name: "calendar_create_event",
-    description: "Create a new calendar event. Prefer approval for high-stakes meetings.",
+    description:
+      'Create a new calendar event on personal or work Google Calendar. Use calendarId "primary" unless a specific calendar is required. Start/end as ISO datetimes.',
     schema: calendar.createEventSchema,
+  }
+);
+
+export const calendarUpdateEvent = tool(
+  async (input: z.infer<typeof calendar.updateEventSchema>) => calendar.updateEvent(input),
+  {
+    name: "calendar_update_event",
+    description:
+      'Update an existing event (summary and/or start/end times). Use context personal or work, calendarId usually "primary". eventId may be composite "personal:googleId" or "work:googleId" from listings, or the raw Google id.',
+    schema: calendar.updateEventSchema,
   }
 );
 
@@ -199,6 +210,7 @@ export const assistantToolsExecute = [
   calendarListEvents,
   calendarListEventsBoth,
   calendarCreateEvent,
+  calendarUpdateEvent,
   todoistListProjects,
   todoistListTasks,
   todoistAddTask,
@@ -229,8 +241,22 @@ export function makeAssistantTools(mode: AgentMode, collector?: ProposalCollecto
     },
     {
       name: "calendar_create_event",
-      description: "Propose creating a new calendar event. Approval required before execution.",
+      description:
+        "Propose creating a new calendar event (personal/work, calendarId usually primary). Approval required before execution.",
       schema: calendar.createEventSchema,
+    }
+  );
+
+  const calendarUpdateEventPropose = tool(
+    async (input: z.infer<typeof calendar.updateEventSchema>) => {
+      const proposal = collector.add("calendar_update_event", input);
+      return JSON.stringify({ success: true, proposalId: proposal.id });
+    },
+    {
+      name: "calendar_update_event",
+      description:
+        "Propose updating an event (title/time). eventId from listings may be personal:id or work:id. Approval required before execution.",
+      schema: calendar.updateEventSchema,
     }
   );
 
@@ -311,6 +337,7 @@ export function makeAssistantTools(mode: AgentMode, collector?: ProposalCollecto
     calendarListEventsBoth,
     // Replace writes with proposal versions
     calendarCreateEventPropose,
+    calendarUpdateEventPropose,
     todoistListProjects,
     todoistListTasks,
     todoistAddTaskPropose,
