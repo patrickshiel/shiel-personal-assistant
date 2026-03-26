@@ -32,6 +32,7 @@ export type ScheduleOneDayViewProps = {
   dayDate: Date;
   onPrevDay: () => void;
   onNextDay: () => void;
+  onToday?: () => void;
   tasks: WeekCalendarTask[];
   onAddTask?: () => void;
   onSelectTask?: (task: WeekCalendarTask) => void;
@@ -53,6 +54,7 @@ export function ScheduleOneDayView({
   dayDate,
   onPrevDay,
   onNextDay,
+  onToday,
   tasks,
   onAddTask,
   onSelectTask,
@@ -121,6 +123,17 @@ export function ScheduleOneDayView({
               <ChevronRightIcon className="size-4" />
             </Button>
           </div>
+          {onToday && !isToday ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0 px-2.5 text-xs"
+              onClick={onToday}
+            >
+              Today
+            </Button>
+          ) : null}
           <div className="min-w-0">
             <h2
               className={cn(
@@ -130,9 +143,6 @@ export function ScheduleOneDayView({
               title={longCaption}
             >
               {longCaption}
-              {isToday ? (
-                <span className="text-muted-foreground ml-1.5 text-sm font-normal">· Today</span>
-              ) : null}
             </h2>
             {calendarLoading || calendarError ? (
               <p
@@ -226,6 +236,7 @@ export function ScheduleOneDayView({
                   ))}
                   {adCals.map((ev) => {
                     const cs = stylesForCalendarContext(ev.context);
+                    const isDeclined = ev.responseStatus === "declined";
                     return ev.htmlLink ? (
                       <a
                         key={ev.id}
@@ -235,7 +246,8 @@ export function ScheduleOneDayView({
                         className={cn(
                           "truncate rounded border px-1 py-px text-[9px] font-medium",
                           cs.chip,
-                          cs.chipHover
+                          cs.chipHover,
+                          isDeclined && "opacity-50 line-through"
                         )}
                       >
                         {ev.title}
@@ -243,7 +255,11 @@ export function ScheduleOneDayView({
                     ) : (
                       <div
                         key={ev.id}
-                        className={cn("truncate rounded border px-1 py-px text-[9px] font-medium", cs.chip)}
+                        className={cn(
+                          "truncate rounded border px-1 py-px text-[9px] font-medium",
+                          cs.chip,
+                          isDeclined && "opacity-50 line-through"
+                        )}
                       >
                         {ev.title}
                       </div>

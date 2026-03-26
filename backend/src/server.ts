@@ -4,6 +4,7 @@ import path from "node:path";
 import express from "express";
 import cors from "cors";
 import { z } from "zod";
+import { cognitoAuthMiddleware } from "./lib/auth.js";
 
 import { getAllTriggerIds, getTrigger, type TriggerId } from "./orchestrator/triggers.js";
 import { newId, createJob, loadJob, listJobs, saveJob, type JobRecord } from "./api/job-store.js";
@@ -30,8 +31,17 @@ import {
 } from "./lib/google-calendar.js";
 
 const app = express();
-app.use(cors({ origin: true }));
-app.use(express.json({ limit: "2mb" }));
+const explicitCorsOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((v) => v.trim())
+  .filter(Boolean);
+app.use(
+  cors({
+    origin: explicitCorsOrigins.length > 0 ? explicitCorsOrigins : true,
+  })
+);
+app.use(express.json({ limit: "12mb" }));
+app.use(cognitoAuthMiddleware());
 
 function sseInit(res: express.Response) {
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -77,6 +87,19 @@ const scheduleDayAssistantBody = z.object({
     .optional(),
 });
 
+const assistantTranscribeBody = z.object({
+  audioBase64: z.string().min(1).max(12_000_000),
+  mimeType: z.string().min(1).max(120).optional(),
+});
+
+const assistantTtsBody = z.object({
+  text: z.string().min(1).max(24_000),
+  voice: z.string().min(1).max(40).optional(),
+  format: z.enum(["mp3", "wav", "opus"]).optional(),
+  speed: z.number().min(0.5).max(2).optional(),
+  instructions: z.string().max(1000).optional(),
+});
+
 const proposeTriggerBody = z.object({
   inputOverride: z.string().min(1).max(20000).optional(),
 });
@@ -100,6 +123,8 @@ const taskUpdateBody = z.object({
   dueString: z.string().max(200).optional(),
   priority: z.number().min(1).max(4).optional(),
   description: z.string().max(10000).optional(),
+  duration: z.number().int().positive().optional(),
+  durationUnit: z.enum(["minute", "day"]).optional(),
 });
 
 const taskCloseBody = z.object({
@@ -112,6 +137,8 @@ const taskCreateBody = z.object({
   dueString: z.string().max(200).optional(),
   priority: z.number().min(1).max(4).optional(),
   description: z.string().max(10000).optional(),
+  duration: z.number().int().positive().optional(),
+  durationUnit: z.enum(["minute", "day"]).optional(),
 });
 
 const obsidianWriteBody = z.object({
@@ -152,6 +179,12 @@ const taskRefineBody = z.object({
     content: z.string(),
     due_string: z.string().optional(),
     due: z.object({ date: z.string() }).passthrough().optional(),
+    duration: z
+      .object({
+        amount: z.number(),
+        unit: z.enum(["minute", "day"]),
+      })
+      .optional(),
     priority: z.number(),
     context: z.enum(["personal", "work"]),
     description: z.string().optional(),
@@ -303,6 +336,8 @@ app.patch("/api/tasks/:taskId", async (req, res) => {
       dueString: body.data.dueString,
       priority: body.data.priority,
       ...(body.data.description !== undefined && { description: body.data.description }),
+      duration: body.data.duration,
+      durationUnit: body.data.durationUnit,
     });
     const parsed = JSON.parse(String(raw)) as { success?: boolean; error?: string };
     if (parsed?.error) return res.status(400).json({ error: parsed.error });
@@ -323,6 +358,8 @@ app.post("/api/tasks", async (req, res) => {
       dueString: body.data.dueString ?? undefined,
       priority: body.data.priority ?? undefined,
       description: body.data.description ?? undefined,
+      duration: body.data.duration ?? undefined,
+      durationUnit: body.data.durationUnit ?? undefined,
     });
     const parsed = JSON.parse(String(raw)) as { error?: string; id?: string; content?: string; [k: string]: unknown };
     if (parsed?.error) return res.status(400).json({ error: parsed.error });
@@ -458,6 +495,123 @@ app.post("/api/assistant/schedule-day", async (req, res) => {
     sseSend(res, "assistant_output_end", {});
     sseSend(res, "proposals", { jobId, proposals });
   });
+});
+
+app.post("/api/assistant/transcribe", async (req, res) => {
+  const body = assistantTranscribeBody.safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+
+  const mimeType = (body.data.mimeType ?? "audio/webm").trim().toLowerCase();
+  if (!mimeType.startsWith("audio/")) {
+    return res.status(400).json({ error: "mimeType must be an audio/* type" });
+  }
+
+  let audioBase64 = body.data.audioBase64.trim();
+  const dataUrlComma = audioBase64.indexOf(",");
+  if (audioBase64.startsWith("data:") && dataUrlComma > 0) {
+    audioBase64 = audioBase64.slice(dataUrlComma + 1);
+  }
+
+  let audioBuffer: Buffer;
+  try {
+    audioBuffer = Buffer.from(audioBase64, "base64");
+  } catch {
+    return res.status(400).json({ error: "Invalid base64 audio payload" });
+  }
+
+  if (audioBuffer.length === 0) {
+    return res.status(400).json({ error: "Audio payload is empty" });
+  }
+  if (audioBuffer.length > 8 * 1024 * 1024) {
+    return res.status(413).json({ error: "Audio payload is too large" });
+  }
+
+  const extension = mimeType.split("/")[1] ?? "webm";
+  const file = new Blob([audioBuffer], { type: mimeType });
+  const formData = new FormData();
+  formData.append("model", process.env.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-4o-mini-transcribe");
+  formData.append("file", file, `speech.${extension}`);
+
+  try {
+    const openAiRes = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: formData,
+    });
+
+    const payload = (await openAiRes.json().catch(() => ({}))) as {
+      text?: string;
+      error?: { message?: string };
+    };
+
+    if (!openAiRes.ok) {
+      const message = payload.error?.message ?? `OpenAI transcription failed (${openAiRes.status})`;
+      return res.status(502).json({ error: message });
+    }
+
+    const text = payload.text?.trim();
+    if (!text) {
+      return res.status(502).json({ error: "Transcription completed without text output" });
+    }
+
+    return res.json({ text });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ error: message });
+  }
+});
+
+app.post("/api/assistant/tts", async (req, res) => {
+  const body = assistantTtsBody.safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+
+  const voice = body.data.voice ?? process.env.OPENAI_TTS_VOICE ?? "alloy";
+  const format = body.data.format ?? "mp3";
+  const speed = body.data.speed ?? 1;
+  const model = process.env.OPENAI_TTS_MODEL ?? "gpt-4o-mini-tts";
+
+  try {
+    const openAiRes = await fetch("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        voice,
+        input: body.data.text,
+        speed,
+        response_format: format,
+        ...(body.data.instructions && { instructions: body.data.instructions }),
+      }),
+    });
+
+    if (!openAiRes.ok) {
+      const payload = (await openAiRes.json().catch(() => ({}))) as {
+        error?: { message?: string };
+      };
+      const message = payload.error?.message ?? `OpenAI TTS failed (${openAiRes.status})`;
+      console.error("[api/assistant/tts]", openAiRes.status, message, { model, voice, speed, format, textLen: body.data.text.length });
+      return res.status(502).json({ error: message });
+    }
+
+    const bytes = Buffer.from(await openAiRes.arrayBuffer());
+    const mimeType = format === "wav" ? "audio/wav" : format === "opus" ? "audio/ogg" : "audio/mpeg";
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Cache-Control", "no-store");
+    return res.send(bytes);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[api/assistant/tts] exception:", message);
+    return res.status(500).json({ error: message });
+  }
 });
 
 app.post("/api/tasks/refine", async (req, res) => {

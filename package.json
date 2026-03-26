@@ -9,9 +9,15 @@
   "scripts": {
     "dev:server": "npm --prefix backend run dev:server",
     "dev:web": "npm --prefix frontend run dev",
-    "dev:full": "concurrently -k -n backend,frontend \"npm --prefix backend run dev:server\" \"npm --prefix frontend run dev\"",
+    "dev": "concurrently -k -n backend,frontend \"npm --prefix backend run dev:server\" \"npm --prefix frontend run dev\"",
     "smoke:approval-flow": "npm --prefix backend run smoke:approval-flow",
-    "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck"
+    "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck",
+    "infra:bootstrap": "npm --prefix infra run cdk -- bootstrap",
+    "infra:diff": "npm --prefix infra run cdk -- diff",
+    "infra:deploy": "npm --prefix infra run cdk -- deploy --require-approval never",
+    "infra:destroy": "npm --prefix infra run cdk -- destroy --force",
+    "deploy:backend:dev": "bash ./scripts/deploy-backend-dev.sh",
+    "deploy:frontend:dev": "bash ./scripts/deploy-frontend-dev.sh"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

@@ -6,6 +6,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getStateDir } from "../lib/paths.js";
+import {
+  ddbPut,
+  ddbQuery,
+  getMemoryTableName,
+  getOrchestratorTableName,
+  getUserPartitionKey,
+  usingDynamoState,
+} from "../lib/aws-state.js";
 
 const STATE_DIR = getStateDir();
 const ORCHESTRATOR_STATE_FILE = path.join(STATE_DIR, "orchestrator-state.json");
@@ -48,6 +56,23 @@ async function ensureStateDir() {
 }
 
 export async function loadOrchestratorState(): Promise<OrchestratorState> {
+  if (usingDynamoState()) {
+    const rows = await ddbQuery<{ triggers?: Record<string, TriggerState>; updatedAt?: string }>({
+      TableName: getOrchestratorTableName(),
+      KeyConditionExpression: "userId = :userId AND entityType = :entityType",
+      ExpressionAttributeValues: {
+        ":userId": getUserPartitionKey(),
+        ":entityType": "orchestrator",
+      },
+      Limit: 1,
+    });
+    const row = rows[0];
+    if (!row) return { ...defaultOrchestratorState };
+    return {
+      triggers: row.triggers ?? {},
+      updatedAt: row.updatedAt ?? new Date().toISOString(),
+    };
+  }
   await ensureStateDir();
   try {
     const raw = await fs.readFile(ORCHESTRATOR_STATE_FILE, "utf-8");
@@ -59,8 +84,20 @@ export async function loadOrchestratorState(): Promise<OrchestratorState> {
 }
 
 export async function saveOrchestratorState(state: OrchestratorState): Promise<void> {
-  await ensureStateDir();
   state.updatedAt = new Date().toISOString();
+  if (usingDynamoState()) {
+    await ddbPut({
+      TableName: getOrchestratorTableName(),
+      Item: {
+        userId: getUserPartitionKey(),
+        entityType: "orchestrator",
+        triggers: state.triggers,
+        updatedAt: state.updatedAt,
+      },
+    });
+    return;
+  }
+  await ensureStateDir();
   await fs.writeFile(ORCHESTRATOR_STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
 }
 
@@ -81,6 +118,28 @@ export async function getTriggerState(triggerId: string): Promise<TriggerState |
 // --- Long-term memory ---
 
 export async function loadMemory(): Promise<MemoryStore> {
+  if (usingDynamoState()) {
+    const rows = await ddbQuery<MemoryEntry & { userId: string; memoryAt: string }>({
+      TableName: getMemoryTableName(),
+      KeyConditionExpression: "userId = :userId",
+      ExpressionAttributeValues: {
+        ":userId": getUserPartitionKey(),
+      },
+      ScanIndexForward: true,
+    });
+    const entries = rows
+      .map((row) => ({
+        id: row.id,
+        at: row.at,
+        content: row.content,
+        type: row.type,
+      }))
+      .filter((row) => typeof row.id === "string" && typeof row.at === "string");
+    return {
+      entries,
+      updatedAt: entries.length ? entries[entries.length - 1]!.at : new Date().toISOString(),
+    };
+  }
   await ensureStateDir();
   try {
     const raw = await fs.readFile(MEMORY_FILE, "utf-8");
@@ -92,12 +151,23 @@ export async function loadMemory(): Promise<MemoryStore> {
 }
 
 export async function appendMemory(entry: Omit<MemoryEntry, "id" | "at">): Promise<MemoryEntry> {
-  const store = await loadMemory();
   const full: MemoryEntry = {
     ...entry,
     id: `mem_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
     at: new Date().toISOString(),
   };
+  if (usingDynamoState()) {
+    await ddbPut({
+      TableName: getMemoryTableName(),
+      Item: {
+        userId: getUserPartitionKey(),
+        memoryAt: `${full.at}#${full.id}`,
+        ...full,
+      },
+    });
+    return full;
+  }
+  const store = await loadMemory();
   store.entries.push(full);
   store.updatedAt = new Date().toISOString();
   await fs.mkdir(STATE_DIR, { recursive: true });

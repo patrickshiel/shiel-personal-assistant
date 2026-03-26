@@ -1,6 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getStateDir } from "../lib/paths.js";
+import {
+  ddbGet,
+  ddbPut,
+  ddbQuery,
+  getJobsTableName,
+  getUserPartitionKey,
+  usingDynamoState,
+} from "../lib/aws-state.js";
 
 export type ProposalId = string;
 
@@ -39,24 +47,58 @@ async function ensureJobDir() {
 }
 
 export async function createJob(partial: Omit<JobRecord, "createdAt" | "updatedAt">): Promise<JobRecord> {
-  await ensureJobDir();
   const now = new Date().toISOString();
   const job: JobRecord = {
     createdAt: now,
     updatedAt: now,
     ...partial,
   };
+  if (usingDynamoState()) {
+    await ddbPut({
+      TableName: getJobsTableName(),
+      Item: {
+        userId: getUserPartitionKey(),
+        jobId: job.id,
+        ...job,
+      },
+    });
+    return job;
+  }
+  await ensureJobDir();
   await fs.writeFile(jobPath(job.id), JSON.stringify(job, null, 2), "utf-8");
   return job;
 }
 
 export async function saveJob(job: JobRecord): Promise<void> {
-  await ensureJobDir();
   job.updatedAt = new Date().toISOString();
+  if (usingDynamoState()) {
+    await ddbPut({
+      TableName: getJobsTableName(),
+      Item: {
+        userId: getUserPartitionKey(),
+        jobId: job.id,
+        ...job,
+      },
+    });
+    return;
+  }
+  await ensureJobDir();
   await fs.writeFile(jobPath(job.id), JSON.stringify(job, null, 2), "utf-8");
 }
 
 export async function loadJob(jobId: string): Promise<JobRecord | null> {
+  if (usingDynamoState()) {
+    const item = await ddbGet<(JobRecord & { userId: string; jobId: string; createdAt: string })>({
+      TableName: getJobsTableName(),
+      Key: {
+        userId: getUserPartitionKey(),
+        jobId,
+      },
+    });
+    if (!item) return null;
+    const { userId: _userId, jobId: _jobId, ...job } = item;
+    return job;
+  }
   try {
     const raw = await fs.readFile(jobPath(jobId), "utf-8");
     return JSON.parse(raw) as JobRecord;
@@ -66,6 +108,24 @@ export async function loadJob(jobId: string): Promise<JobRecord | null> {
 }
 
 export async function listJobs(status?: JobRecord["status"]): Promise<JobRecord[]> {
+  if (usingDynamoState()) {
+    const items = await ddbQuery<(JobRecord & { userId: string; jobId: string })>({
+      TableName: getJobsTableName(),
+      IndexName: "gsi_createdAt",
+      KeyConditionExpression: "userId = :userId",
+      ExpressionAttributeValues: {
+        ":userId": getUserPartitionKey(),
+      },
+      ScanIndexForward: false,
+    });
+    const out = items
+      .map((item) => {
+        const { userId: _userId, jobId: _jobId, ...job } = item;
+        return job;
+      })
+      .filter((job) => (status ? job.status === status : true));
+    return out;
+  }
   await ensureJobDir();
   const files = await fs.readdir(JOB_DIR).catch(() => []);
   const out: JobRecord[] = [];

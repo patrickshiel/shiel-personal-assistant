@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
   Conversation,
@@ -24,6 +25,8 @@ import {
   MessageSquare,
   PencilIcon,
   PlusIcon,
+  SquareIcon,
+  Volume2Icon,
   XIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -50,6 +53,15 @@ import {
   tasksDataTasksForDateKey,
   tasksDataTasksInNextSevenDays,
 } from "@/lib/tasks-week";
+import {
+  buildCognitoLoginUrl,
+  buildCognitoLogoutUrl,
+  captureTokenFromUrlHash,
+  clearAccessToken,
+  isFrontendAuthEnabled,
+  readStoredAccessToken,
+  withAuthHeader,
+} from "@/lib/cognito-auth";
 
 type Trigger = { id: string; schedule: string | null; defaultInput: string };
 type Proposal = { id: string; toolName: string; args: unknown };
@@ -69,6 +81,7 @@ type TaskItem = {
   content: string;
   due_string?: string;
   due?: { date: string; datetime?: string; string?: string };
+  duration?: { amount: number; unit: "minute" | "day" };
   priority: number;
   context: TaskContext;
   description?: string;
@@ -79,6 +92,26 @@ type TasksData = {
   upcoming: TaskItem[];
   error?: string;
 };
+
+type TtsVoiceOption = {
+  value: string;
+  label: string;
+  instructions?: string;
+};
+
+const TTS_VOICE_OPTIONS: TtsVoiceOption[] = [
+  { value: "sage", label: "Sage (Irish)", instructions: "Speak with a warm Irish accent." },
+  { value: "alloy", label: "Alloy" },
+  { value: "ash", label: "Ash" },
+  { value: "coral", label: "Coral" },
+  { value: "echo", label: "Echo" },
+  { value: "nova", label: "Nova" },
+  { value: "verse", label: "Verse" },
+  { value: "marin", label: "Marin" },
+  { value: "cedar", label: "Cedar" },
+];
+
+const TTS_SPEED_OPTIONS = [0.9, 1.0, 1.1, 1.25, 1.5] as const;
 
 const backendUrl =
   process.env.NEXT_PUBLIC_BACKEND_URL ?? process.env.NEXT_PUBLIC_EXPRESS_BACKEND_URL ?? "http://localhost:3001";
@@ -292,11 +325,13 @@ function TasksSection({
   onOpenChange?: (open: boolean) => void;
   renderTaskRow: (task: TaskItem) => ReactNode;
 }) {
+  const initialDefaultOpenRef = useRef(defaultOpen);
+  const isControlled = open !== undefined && onOpenChange !== undefined;
+
   return (
     <div className="flex shrink-0 flex-col overflow-hidden">
       <Collapsible
-        defaultOpen={defaultOpen}
-        {...(open !== undefined && onOpenChange ? { open, onOpenChange } : {})}
+        {...(isControlled ? { open, onOpenChange } : { defaultOpen: initialDefaultOpenRef.current })}
         className="flex flex-col"
       >
         <CollapsibleTrigger className="group flex shrink-0 items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 text-left text-sm font-medium hover:bg-muted/80">
@@ -390,8 +425,13 @@ function proposalActionLabel(p: Proposal): string {
   return p.toolName;
 }
 
-async function fetchSseDeltas(url: string, init: RequestInit, onDelta: (delta: string) => void) {
-  const res = await fetch(url, init);
+async function fetchSseDeltas(
+  url: string,
+  init: RequestInit,
+  onDelta: (delta: string) => void,
+  fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = fetch
+) {
+  const res = await fetchImpl(url, init);
   if (!res.ok) {
     throw new Error(`Request failed: ${res.status}`);
   }
@@ -423,7 +463,53 @@ async function fetchSseDeltas(url: string, init: RequestInit, onDelta: (delta: s
   }
 }
 
+async function blobToBase64(audioBlob: Blob): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      resolve(result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read audio blob"));
+    reader.readAsDataURL(audioBlob);
+  });
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex < 0) throw new Error("Invalid audio payload");
+  return dataUrl.slice(commaIndex + 1);
+}
+
+function mergeInputWithTranscript(existing: string, transcript: string): string {
+  const current = existing.trim();
+  const spoken = transcript.trim();
+  if (!spoken) return current;
+  if (!current) return spoken;
+  if (current.endsWith(spoken)) return current;
+  return `${current} ${spoken}`;
+}
+
+function parseTaskDurationFromRaw(
+  raw: Record<string, unknown>
+): { amount: number; unit: "minute" | "day" } | undefined {
+  const unitRaw = raw.durationUnit ?? raw.duration_unit;
+  const unit = unitRaw === "minute" || unitRaw === "day" ? unitRaw : undefined;
+
+  const amountRaw = raw.duration;
+  const amount =
+    typeof amountRaw === "number"
+      ? amountRaw
+      : typeof amountRaw === "string" && amountRaw.trim() !== ""
+        ? Number(amountRaw)
+        : undefined;
+
+  if (!unit || !Number.isFinite(amount ?? NaN)) return undefined;
+  const intAmount = Math.max(1, Math.floor(amount as number));
+  return { amount: intAmount, unit };
+}
+
 export default function HomePage() {
+  const authEnabled = isFrontendAuthEnabled();
+  const [authToken, setAuthToken] = useState<string>("");
+  const [authChecked, setAuthChecked] = useState<boolean>(!authEnabled);
   const [activeTab, setActiveTab] = useState<string>("overview");
 
   const [triggers, setTriggers] = useState<Trigger[]>([]);
@@ -435,6 +521,21 @@ export default function HomePage() {
 
   const [triggerRunning, setTriggerRunning] = useState(false);
   const [triggerOutput, setTriggerOutput] = useState("");
+  const [speakAssistantReplies, setSpeakAssistantReplies] = useState(true);
+  const [ttsVoice, setTtsVoice] = useState<string>("sage");
+  const [ttsSpeed, setTtsSpeed] = useState<number>(1.5);
+  const [ttsLoadingId, setTtsLoadingId] = useState<string | null>(null);
+  const [ttsPlayingId, setTtsPlayingId] = useState<string | null>(null);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsAudioUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!authEnabled) return;
+    const hashToken = captureTokenFromUrlHash();
+    const token = hashToken || readStoredAccessToken();
+    setAuthToken(token);
+    setAuthChecked(true);
+  }, [authEnabled]);
 
   const [tasksData, setTasksData] = useState<TasksData | null>(null);
   const [tasksLoading, setTasksLoading] = useState(false);
@@ -487,6 +588,20 @@ export default function HomePage() {
     return new Date(t.getFullYear(), t.getMonth(), t.getDate());
   });
 
+  const authHeaders = useCallback(
+    (headers?: HeadersInit): Headers => withAuthHeader(headers, authToken),
+    [authToken]
+  );
+
+  const authedFetch = useCallback(
+    (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+      fetch(input, {
+        ...init,
+        headers: authHeaders(init?.headers),
+      }),
+    [authHeaders]
+  );
+
   const shiftScheduleDay = useCallback((deltaDays: number) => {
     setScheduleDayDate((d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + deltaDays));
   }, []);
@@ -494,7 +609,7 @@ export default function HomePage() {
   const refreshJobs = async () => {
     setJobsLoading(true);
     try {
-      const res = await fetch(`${backendUrl}/api/jobs?status=pending`);
+      const res = await authedFetch(`${backendUrl}/api/jobs?status=pending`);
       const json = (await res.json()) as { jobs: JobRecord[] };
       setJobs(json.jobs ?? []);
     } finally {
@@ -505,7 +620,7 @@ export default function HomePage() {
   const refreshTriggers = async () => {
     setTriggersLoading(true);
     try {
-      const res = await fetch(`${backendUrl}/api/triggers`);
+      const res = await authedFetch(`${backendUrl}/api/triggers`);
       const json = (await res.json()) as { triggers: Trigger[] };
       setTriggers(json.triggers ?? []);
     } finally {
@@ -524,7 +639,7 @@ export default function HomePage() {
     else setTasksRefreshing(true);
     setTaskActionError(null);
     try {
-      const res = await fetch(`${backendUrl}/api/tasks`);
+      const res = await authedFetch(`${backendUrl}/api/tasks`);
       const json = (await res.json()) as TasksData;
       if (!res.ok) {
         setTasksData({
@@ -540,7 +655,7 @@ export default function HomePage() {
       setTasksLoading(false);
       setTasksRefreshing(false);
     }
-  }, []);
+  }, [authedFetch]);
 
   useEffect(() => {
     if (activeTab === "tasks" || activeTab === "schedule" || activeTab === "schedule-week") refreshTasks();
@@ -558,7 +673,7 @@ export default function HomePage() {
     setCalendarLoading(true);
     setCalendarError(null);
     const url = `${backendUrl}/api/calendar/events?timeMin=${encodeURIComponent(timeMin.toISOString())}&timeMax=${encodeURIComponent(timeMax.toISOString())}`;
-    fetch(url, { signal: ac.signal })
+    authedFetch(url, { signal: ac.signal })
       .then(async (res) => {
         const data = (await res.json()) as {
           events?: CalendarEventDto[];
@@ -585,7 +700,7 @@ export default function HomePage() {
       });
 
     return () => ac.abort();
-  }, [activeTab, backendUrl]);
+  }, [activeTab, authedFetch]);
 
   useEffect(() => {
     if (activeTab !== "schedule") return;
@@ -597,7 +712,7 @@ export default function HomePage() {
     setCalendarLoading(true);
     setCalendarError(null);
     const url = `${backendUrl}/api/calendar/events?timeMin=${encodeURIComponent(timeMin.toISOString())}&timeMax=${encodeURIComponent(timeMax.toISOString())}`;
-    fetch(url, { signal: ac.signal })
+    authedFetch(url, { signal: ac.signal })
       .then(async (res) => {
         const data = (await res.json()) as {
           events?: CalendarEventDto[];
@@ -624,7 +739,7 @@ export default function HomePage() {
       });
 
     return () => ac.abort();
-  }, [activeTab, backendUrl, scheduleDayDate]);
+  }, [activeTab, authedFetch, scheduleDayDate]);
 
   const scheduleSevenDayTasks = tasksDataTasksInNextSevenDays(tasksData);
   const scheduleDayTasks = tasksDataTasksForDateKey(tasksData, localDateStr(scheduleDayDate));
@@ -687,7 +802,7 @@ export default function HomePage() {
   ) => {
     setTaskActionError(null);
     try {
-      const res = await fetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
+      const res = await authedFetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -725,7 +840,7 @@ export default function HomePage() {
     const taskId = selectedTask.id;
     const context = selectedTask.context;
     try {
-      const res = await fetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
+      const res = await authedFetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -803,7 +918,7 @@ export default function HomePage() {
     setTaskActionError(null);
     setPanelSaving(true);
     try {
-      const res = await fetch(`${backendUrl}/api/tasks`, {
+      const res = await authedFetch(`${backendUrl}/api/tasks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -852,7 +967,7 @@ export default function HomePage() {
   const completeTask = async (taskId: string, context: TaskContext) => {
     setTaskActionError(null);
     try {
-      const res = await fetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}/close`, {
+      const res = await authedFetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}/close`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ context }),
@@ -886,29 +1001,38 @@ export default function HomePage() {
     setTriggerRunning(true);
     setTriggerOutput("");
     setSelectedJob(null);
+    let fullText = "";
     try {
       await fetchSseDeltas(
         `${backendUrl}/api/triggers/${encodeURIComponent(triggerId)}/propose`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) },
-        (delta) => setTriggerOutput((prev) => prev + delta)
+        (delta) => {
+          fullText += delta;
+          setTriggerOutput((prev) => prev + delta);
+        },
+        authedFetch
       );
+      if (speakAssistantReplies && fullText.trim()) {
+        void playAssistantAudio(`trigger-output-${Date.now()}`, fullText, { force: true });
+      }
     } finally {
       setTriggerRunning(false);
       await refreshJobs();
     }
   };
 
-  const runAssistantPropose = async () => {
-    const message = chatInput.trim();
+  const runAssistantPropose = async (messageOverride?: string) => {
+    const message = (messageOverride ?? chatInput).trim();
     if (!message) return;
 
     setChatRunning(true);
+    setChatInput("");
     setChatOutput("");
     setChatError(null);
     setSelectedJob(null);
 
     try {
-      const res = await fetch("/api/assistant/propose", {
+      const res = await authedFetch("/api/assistant/propose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message }),
@@ -921,17 +1045,23 @@ export default function HomePage() {
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      let fullText = "";
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
-        if (chunk) setChatOutput((prev) => prev + chunk);
+        if (chunk) {
+          fullText += chunk;
+          setChatOutput((prev) => prev + chunk);
+        }
+      }
+      if (speakAssistantReplies && fullText.trim()) {
+        void playAssistantAudio("overview-output", fullText, { force: true });
       }
     } catch (err) {
       setChatError(err instanceof Error ? err.message : String(err));
     } finally {
       setChatRunning(false);
-      setChatInput("");
       await refreshJobs();
     }
   };
@@ -955,7 +1085,7 @@ export default function HomePage() {
         timeMax = new Date(d6.getFullYear(), d6.getMonth(), d6.getDate(), 23, 59, 59, 999);
       }
       const url = `${backendUrl}/api/calendar/events?timeMin=${encodeURIComponent(timeMin.toISOString())}&timeMax=${encodeURIComponent(timeMax.toISOString())}`;
-      const res = await fetch(url);
+      const res = await authedFetch(url);
       const data = (await res.json()) as {
         events?: CalendarEventDto[];
         configured?: CalendarConfigured;
@@ -978,8 +1108,8 @@ export default function HomePage() {
     }
   }, [activeTab, backendUrl, scheduleDayDate]);
 
-  const runScheduleDayAssistant = async () => {
-    const message = scheduleChatInput.trim();
+  const runScheduleDayAssistant = async (messageOverride?: string) => {
+    const message = (messageOverride ?? scheduleChatInput).trim();
     if (!message) return;
 
     const dateKey = localDateStr(scheduleDayDate);
@@ -998,7 +1128,7 @@ export default function HomePage() {
     setSelectedJob(null);
 
     try {
-      const res = await fetch(`${backendUrl}/api/assistant/schedule-day`, {
+      const res = await authedFetch(`${backendUrl}/api/assistant/schedule-day`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1036,6 +1166,9 @@ export default function HomePage() {
           if (event === "assistant_output_end") {
             setScheduleChatMessages((prev) => [...prev, { role: "assistant", content: fullText }]);
             setScheduleChatStreaming("");
+            if (speakAssistantReplies && fullText.trim()) {
+              void playAssistantAudio(`schedule-assistant-${Date.now()}`, fullText, { force: true });
+            }
           }
           if (event === "proposals") {
             const list = (data?.proposals as Proposal[] | undefined) ?? [];
@@ -1053,6 +1186,116 @@ export default function HomePage() {
       await refreshJobs();
     }
   };
+
+  const transcribeAudioBlob = useCallback(async (audioBlob: Blob) => {
+    const audioBase64 = await blobToBase64(audioBlob);
+    const res = await authedFetch("/api/assistant/transcribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        audioBase64,
+        mimeType: audioBlob.type || "audio/webm",
+      }),
+    });
+    const json = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
+    if (!res.ok) {
+      throw new Error(json.error ?? `Transcription failed: ${res.status}`);
+    }
+    if (!json.text) throw new Error("Empty transcription result");
+    return json.text;
+  }, []);
+
+  const stopAssistantAudio = useCallback(() => {
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause();
+      ttsAudioRef.current.onended = null;
+      ttsAudioRef.current.onerror = null;
+      ttsAudioRef.current.src = "";
+      ttsAudioRef.current = null;
+    }
+    if (ttsAudioUrlRef.current) {
+      URL.revokeObjectURL(ttsAudioUrlRef.current);
+      ttsAudioUrlRef.current = null;
+    }
+    setTtsPlayingId(null);
+  }, []);
+
+  const requestTtsAudio = useCallback(async (text: string) => {
+    const voiceOption = TTS_VOICE_OPTIONS.find((v) => v.value === ttsVoice);
+    const res = await authedFetch("/api/assistant/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        voice: ttsVoice,
+        speed: ttsSpeed,
+        instructions: voiceOption?.instructions,
+      }),
+    });
+    if (!res.ok) {
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(json.error ?? `TTS failed: ${res.status}`);
+    }
+    return res.blob();
+  }, [ttsSpeed, ttsVoice]);
+
+  const playAssistantAudio = useCallback(
+    async (id: string, text: string, opts?: { force?: boolean }) => {
+      const content = text.trim();
+      if (!content) return;
+
+      if (ttsPlayingId === id && !opts?.force) {
+        stopAssistantAudio();
+        return;
+      }
+
+      setTtsLoadingId(id);
+      stopAssistantAudio();
+      try {
+        const audioBlob = await requestTtsAudio(content);
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        ttsAudioRef.current = audio;
+        ttsAudioUrlRef.current = audioUrl;
+        audio.onended = () => {
+          if (ttsAudioRef.current === audio) {
+            ttsAudioRef.current = null;
+          }
+          if (ttsAudioUrlRef.current === audioUrl) {
+            URL.revokeObjectURL(audioUrl);
+            ttsAudioUrlRef.current = null;
+          }
+          setTtsPlayingId((prev) => (prev === id ? null : prev));
+        };
+        audio.onerror = () => {
+          if (ttsAudioRef.current === audio) {
+            ttsAudioRef.current = null;
+          }
+          if (ttsAudioUrlRef.current === audioUrl) {
+            URL.revokeObjectURL(audioUrl);
+            ttsAudioUrlRef.current = null;
+          }
+          setTtsPlayingId((prev) => (prev === id ? null : prev));
+        };
+        await audio.play();
+        setTtsPlayingId(id);
+      } catch (err) {
+        if (process.env.NODE_ENV === "development") {
+          console.warn("[TTS]", err);
+        }
+      } finally {
+        setTtsLoadingId((prev) => (prev === id ? null : prev));
+      }
+    },
+    [requestTtsAudio, stopAssistantAudio, ttsPlayingId]
+  );
+
+  useEffect(
+    () => () => {
+      stopAssistantAudio();
+    },
+    [stopAssistantAudio]
+  );
 
   const applyObsidianProposalFromTool = async (
     p: Proposal,
@@ -1083,7 +1326,7 @@ export default function HomePage() {
       ) {
         body.frontmatter = raw.frontmatter;
       }
-      const res = await fetch(url, {
+      const res = await authedFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -1134,7 +1377,7 @@ export default function HomePage() {
         if (calId) body.calendarId = calId;
         if (typeof raw.description === "string" && raw.description) body.description = raw.description;
         if (Array.isArray(raw.attendees)) body.attendees = raw.attendees;
-        const res = await fetch(`${backendUrl}/api/calendar/create`, {
+        const res = await authedFetch(`${backendUrl}/api/calendar/create`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -1171,7 +1414,7 @@ export default function HomePage() {
         if (summary != null && summary.trim()) body.summary = summary;
         if (start != null && start.trim()) body.start = start;
         if (end != null && end.trim()) body.end = end;
-        const res = await fetch(`${backendUrl}/api/calendar/update`, {
+        const res = await authedFetch(`${backendUrl}/api/calendar/update`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -1234,9 +1477,10 @@ export default function HomePage() {
         const dueString =
           typeof raw.dueString === "string" ? raw.dueString : typeof raw.due_string === "string" ? raw.due_string : undefined;
         const priority = typeof raw.priority === "number" ? raw.priority : undefined;
+        const duration = parseTaskDurationFromRaw(raw);
         const description =
           raw.description === null ? null : typeof raw.description === "string" ? raw.description : undefined;
-        const res = await fetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
+        const res = await authedFetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1244,6 +1488,7 @@ export default function HomePage() {
             ...(content != null && { content }),
             ...(dueString != null && { dueString }),
             ...(priority != null && { priority }),
+            ...(duration != null && { duration: duration.amount, durationUnit: duration.unit }),
             ...(description !== undefined && { description: description === null ? "" : description }),
           }),
         });
@@ -1262,6 +1507,7 @@ export default function HomePage() {
             ...prev,
             content: content ?? prev.content,
             due_string: dueString ?? prev.due_string,
+            duration: duration ?? prev.duration,
             priority: priority ?? prev.priority,
             description: nextDesc,
           };
@@ -1276,7 +1522,7 @@ export default function HomePage() {
           setScheduleChatApplyError("Proposal is missing task id or context.");
           return;
         }
-        const res = await fetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}/close`, {
+        const res = await authedFetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}/close`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ context }),
@@ -1298,9 +1544,10 @@ export default function HomePage() {
         const dueString =
           typeof raw.dueString === "string" ? raw.dueString : typeof raw.due_string === "string" ? raw.due_string : undefined;
         const priority = typeof raw.priority === "number" ? raw.priority : undefined;
+        const duration = parseTaskDurationFromRaw(raw);
         const description =
           raw.description === null ? undefined : typeof raw.description === "string" ? raw.description : undefined;
-        const res = await fetch(`${backendUrl}/api/tasks`, {
+        const res = await authedFetch(`${backendUrl}/api/tasks`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1308,6 +1555,7 @@ export default function HomePage() {
             content,
             ...(dueString != null && dueString !== "" && { dueString }),
             ...(priority != null && { priority }),
+            ...(duration != null && { duration: duration.amount, durationUnit: duration.unit }),
             ...(description != null && description !== "" && { description }),
           }),
         });
@@ -1329,7 +1577,7 @@ export default function HomePage() {
   const approveAndExecute = async () => {
     if (!selectedJob) return;
     const approvedProposalIds = selectedJob.proposals.map((p) => p.id);
-    await fetch(`${backendUrl}/api/jobs/${selectedJob.id}/execute`, {
+    await authedFetch(`${backendUrl}/api/jobs/${selectedJob.id}/execute`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ approvedProposalIds }),
@@ -1355,7 +1603,7 @@ export default function HomePage() {
     }));
 
     try {
-      const res = await fetch(`${backendUrl}/api/tasks/refine`, {
+      const res = await authedFetch(`${backendUrl}/api/tasks/refine`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ task: selectedTask, message, history }),
@@ -1388,6 +1636,9 @@ export default function HomePage() {
           if (event === "assistant_output_end") {
             setRefineMessages((prev) => [...prev, { role: "assistant", content: fullText }]);
             setRefineStreamingContent("");
+            if (speakAssistantReplies && fullText.trim()) {
+              void playAssistantAudio(`refine-assistant-${Date.now()}`, fullText, { force: true });
+            }
           }
           if (event === "proposals") {
             const list = (data?.proposals as Proposal[] | undefined) ?? [];
@@ -1409,6 +1660,39 @@ export default function HomePage() {
       setRefineRunning(false);
     }
   };
+
+  const submitOverviewSpeech = useCallback(
+    (transcript: string) => {
+      if (chatRunning) return;
+      const message = mergeInputWithTranscript(chatInput, transcript);
+      if (!message) return;
+      setChatInput("");
+      void runAssistantPropose(message);
+    },
+    [chatInput, chatRunning, runAssistantPropose]
+  );
+
+  const submitRefineSpeech = useCallback(
+    (transcript: string) => {
+      if (refineRunning) return;
+      const message = mergeInputWithTranscript(refineInput, transcript);
+      if (!message) return;
+      setRefineInput("");
+      void sendRefineMessage(message);
+    },
+    [refineInput, refineRunning, sendRefineMessage]
+  );
+
+  const submitScheduleSpeech = useCallback(
+    (transcript: string) => {
+      if (scheduleChatRunning) return;
+      const message = mergeInputWithTranscript(scheduleChatInput, transcript);
+      if (!message) return;
+      setScheduleChatInput("");
+      void runScheduleDayAssistant(message);
+    },
+    [scheduleChatInput, scheduleChatRunning, runScheduleDayAssistant]
+  );
 
   const applyRefineProposal = async (p: Proposal) => {
     if (p.toolName === "obsidian_write_note" || p.toolName === "obsidian_append_to_note") {
@@ -1434,10 +1718,11 @@ export default function HomePage() {
     const dueString =
       typeof raw.dueString === "string" ? raw.dueString : typeof raw.due_string === "string" ? raw.due_string : undefined;
     const priority = typeof raw.priority === "number" ? raw.priority : undefined;
+    const duration = parseTaskDurationFromRaw(raw);
     const description =
       raw.description === null ? null : typeof raw.description === "string" ? raw.description : undefined;
     try {
-      const res = await fetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
+      const res = await authedFetch(`${backendUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1445,6 +1730,7 @@ export default function HomePage() {
           ...(content != null && { content }),
           ...(dueString != null && { dueString }),
           ...(priority != null && { priority }),
+          ...(duration != null && { duration: duration.amount, durationUnit: duration.unit }),
           ...(description !== undefined && { description: description === null ? "" : description }),
         }),
       });
@@ -1463,6 +1749,7 @@ export default function HomePage() {
           ...prev,
           content: content ?? prev.content,
           due_string: dueString ?? prev.due_string,
+          duration: duration ?? prev.duration,
           priority: priority ?? prev.priority,
           description: nextDesc,
         };
@@ -1583,6 +1870,53 @@ export default function HomePage() {
   const scheduleTabsFillHeight =
     activeTab === "tasks" || activeTab === "schedule" || activeTab === "schedule-week";
 
+  const cognitoLoginUrl = useMemo(() => (authEnabled ? buildCognitoLoginUrl() : ""), [authEnabled]);
+  const cognitoLogoutUrl = useMemo(() => (authEnabled ? buildCognitoLogoutUrl() : ""), [authEnabled]);
+
+  const openLogin = useCallback(() => {
+    if (!cognitoLoginUrl) return;
+    window.location.assign(cognitoLoginUrl);
+  }, [cognitoLoginUrl]);
+
+  const signOut = useCallback(() => {
+    clearAccessToken();
+    setAuthToken("");
+    if (cognitoLogoutUrl) {
+      window.location.assign(cognitoLogoutUrl);
+    }
+  }, [cognitoLogoutUrl]);
+
+  if (authEnabled && !authChecked) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center px-6">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2Icon className="size-4 animate-spin" />
+          <span>Checking session...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (authEnabled && !authToken) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center px-6">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Sign in required</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Authentication is enabled for this environment. Sign in with Cognito to access the assistant.
+            </p>
+            <Button type="button" className="w-full" disabled={!cognitoLoginUrl} onClick={openLogin}>
+              Sign in with Cognito
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -1603,6 +1937,77 @@ export default function HomePage() {
             <TabsTrigger value="schedule-week">Next 7 days</TabsTrigger>
           </TabsList>
           <div className="flex shrink-0 items-center gap-2">
+            <Button
+              type="button"
+              variant={speakAssistantReplies ? "default" : "outline"}
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setSpeakAssistantReplies((v) => !v)}
+            >
+              {speakAssistantReplies ? "Speak replies: on" : "Speak replies: off"}
+            </Button>
+            {ttsLoadingId ? (
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Loader2Icon className="size-3.5 animate-spin" />
+                <span>Loading…</span>
+              </div>
+            ) : ttsPlayingId ? (
+              <div className="flex items-center gap-1">
+                <Volume2Icon className="size-3.5 text-primary animate-pulse" />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-6 shrink-0"
+                  onClick={stopAssistantAudio}
+                  aria-label="Stop playback"
+                  title="Stop playback"
+                >
+                  <SquareIcon className="size-3" />
+                </Button>
+              </div>
+            ) : null}
+            <Select
+              value={ttsVoice}
+              onValueChange={(value) => {
+                if (value) setTtsVoice(value);
+              }}
+            >
+              <SelectTrigger size="sm" className="h-7 min-w-44 px-2 text-xs">
+                <SelectValue placeholder="Voice" />
+              </SelectTrigger>
+              <SelectContent>
+                {TTS_VOICE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={String(ttsSpeed)}
+              onValueChange={(value) => {
+                if (!value) return;
+                const parsed = Number(value);
+                if (!Number.isNaN(parsed)) setTtsSpeed(parsed);
+              }}
+            >
+              <SelectTrigger size="sm" className="h-7 min-w-20 px-2 text-xs">
+                <SelectValue placeholder="Speed" />
+              </SelectTrigger>
+              <SelectContent>
+                {TTS_SPEED_OPTIONS.map((speed) => (
+                  <SelectItem key={speed} value={String(speed)}>
+                    {speed}x
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {authEnabled ? (
+              <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={signOut}>
+                Sign out
+              </Button>
+            ) : null}
             <ThemeToggle />
             {activeTab === "tasks" ? (
               <>
@@ -1817,6 +2222,20 @@ export default function HomePage() {
                                   comfortableTrigger
                                 />
                               </TaskDetailRow>
+                              <TaskDetailRow label="Duration">
+                                <Badge
+                                  variant="outline"
+                                  className="inline-flex h-7 w-fit shrink-0 items-center rounded-md px-2.5 py-0 text-sm font-normal leading-none"
+                                >
+                                  {panelCreating
+                                    ? "—"
+                                    : selectedTask?.duration
+                                      ? selectedTask.duration.unit === "minute"
+                                        ? `${selectedTask.duration.amount} min`
+                                        : `${selectedTask.duration.amount} day`
+                                      : "60 min (default)"}
+                                </Badge>
+                              </TaskDetailRow>
                               <TaskDetailRow label="Priority">
                                 <div className="flex flex-wrap gap-1">
                                   {([1, 2, 3, 4] as const).map((p) => (
@@ -1855,6 +2274,18 @@ export default function HomePage() {
                                 >
                                   <CalendarIcon className="size-3.5 shrink-0 opacity-80" />
                                   {formatDueForDisplay(selectedTask!)}
+                                </Badge>
+                              </TaskDetailRow>
+                              <TaskDetailRow label="Duration">
+                                <Badge
+                                  variant="outline"
+                                  className="inline-flex h-7 w-fit shrink-0 items-center rounded-md px-2.5 py-0 text-sm font-normal leading-none"
+                                >
+                                  {selectedTask!.duration
+                                    ? selectedTask!.duration.unit === "minute"
+                                      ? `${selectedTask!.duration.amount} min`
+                                      : `${selectedTask!.duration.amount} day`
+                                    : "60 min (default)"}
                                 </Badge>
                               </TaskDetailRow>
                               <TaskDetailRow label="Priority">
@@ -1982,6 +2413,23 @@ export default function HomePage() {
                             <Message key={i} from={m.role}>
                               <MessageContent>
                                 <MessageResponse>{m.content}</MessageResponse>
+                                {m.role === "assistant" ? (
+                                  <div className="mt-2">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 px-2 text-xs"
+                                      onClick={() => void playAssistantAudio(`refine-${i}`, m.content)}
+                                    >
+                                      {ttsLoadingId === `refine-${i}`
+                                        ? "Loading…"
+                                        : ttsPlayingId === `refine-${i}`
+                                          ? "Stop"
+                                          : "Play"}
+                                    </Button>
+                                  </div>
+                                ) : null}
                               </MessageContent>
                             </Message>
                           ))}
@@ -2045,6 +2493,8 @@ export default function HomePage() {
                       />
                       <SpeechInput
                         onTranscriptionChange={(text) => setRefineInput((prev) => (prev ? `${prev} ${text}` : text))}
+                        onAudioRecorded={transcribeAudioBlob}
+                        onSessionTranscription={submitRefineSpeech}
                         disabled={refineRunning}
                         size="icon"
                         className="h-9 w-9 shrink-0"
@@ -2099,14 +2549,18 @@ export default function HomePage() {
             {!tasksLoading && tasksData && !tasksData.error ? (
               <ResizablePanelGroup
                 orientation="horizontal"
-                className="min-h-0 flex-1 rounded-lg border border-border bg-muted/35 shadow-sm shadow-black/[0.07] ring-1 ring-black/[0.04] dark:border-border/60 dark:bg-muted/15 dark:shadow-none dark:ring-0"
+                className="min-h-0 flex-1"
               >
-                <ResizablePanel defaultSize={50} minSize={25} className="min-h-0 min-w-0">
+                <ResizablePanel defaultSize={50} minSize={25} className="min-h-0 min-w-0 pr-4">
                   <ScheduleOneDayView
                     className="min-h-0 h-full"
                     dayDate={scheduleDayDate}
                     onPrevDay={() => shiftScheduleDay(-1)}
                     onNextDay={() => shiftScheduleDay(1)}
+                    onToday={() => {
+                      const t = new Date();
+                      setScheduleDayDate(new Date(t.getFullYear(), t.getMonth(), t.getDate()));
+                    }}
                     tasks={scheduleDayTasks}
                     calendarEvents={calendarEvents}
                     calendarLoading={calendarLoading}
@@ -2143,6 +2597,23 @@ export default function HomePage() {
                               <Message key={i} from={m.role}>
                                 <MessageContent>
                                   <MessageResponse>{m.content}</MessageResponse>
+                                  {m.role === "assistant" ? (
+                                    <div className="mt-2">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-7 px-2 text-xs"
+                                        onClick={() => void playAssistantAudio(`schedule-${i}`, m.content)}
+                                      >
+                                        {ttsLoadingId === `schedule-${i}`
+                                          ? "Loading…"
+                                          : ttsPlayingId === `schedule-${i}`
+                                            ? "Stop"
+                                            : "Play"}
+                                      </Button>
+                                    </div>
+                                  ) : null}
                                 </MessageContent>
                               </Message>
                             ))}
@@ -2214,6 +2685,18 @@ export default function HomePage() {
                           placeholder="Ask about tasks or events on this day…"
                           className="min-w-0 flex-1 bg-background"
                           disabled={scheduleChatRunning}
+                        />
+                        <SpeechInput
+                          onTranscriptionChange={(text) =>
+                            setScheduleChatInput((prev) => (prev ? `${prev} ${text}` : text))
+                          }
+                          onAudioRecorded={transcribeAudioBlob}
+                          onSessionTranscription={submitScheduleSpeech}
+                          disabled={scheduleChatRunning}
+                          size="icon"
+                          className="h-9 w-9 shrink-0"
+                          aria-label="Voice input"
+                          title="Voice input"
                         />
                         <Button
                           type="submit"
@@ -2293,6 +2776,21 @@ export default function HomePage() {
                         <Message from="assistant">
                           <MessageContent>
                             <MessageResponse>{chatOutput}</MessageResponse>
+                            <div className="mt-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => void playAssistantAudio("overview-output", chatOutput)}
+                              >
+                                {ttsLoadingId === "overview-output"
+                                  ? "Loading…"
+                                  : ttsPlayingId === "overview-output"
+                                    ? "Stop"
+                                    : "Play"}
+                              </Button>
+                            </div>
                           </MessageContent>
                         </Message>
                       )}
@@ -2316,8 +2814,18 @@ export default function HomePage() {
                       onChange={(e) => setChatInput(e.target.value)}
                       disabled={chatRunning}
                       placeholder='Ask: "What tasks are due today?"'
-                      className="min-h-[52px] w-full resize-none rounded-lg border border-input bg-background px-4 py-3 pr-12 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      className="min-h-[52px] w-full resize-none rounded-lg border border-input bg-background px-4 py-3 pr-24 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
                       rows={1}
+                    />
+                    <SpeechInput
+                      onTranscriptionChange={(text) => setChatInput((prev) => (prev ? `${prev} ${text}` : text))}
+                      onAudioRecorded={transcribeAudioBlob}
+                      onSessionTranscription={submitOverviewSpeech}
+                      disabled={chatRunning}
+                      size="icon"
+                      className="absolute bottom-1 right-11 h-9 w-9 shrink-0"
+                      aria-label="Voice input"
+                      title="Voice input"
                     />
                     <Button
                       type="submit"
@@ -2435,7 +2943,23 @@ export default function HomePage() {
               </div>
 
               <div className="space-y-2">
-                <p className="text-sm text-muted-foreground">Trigger output (streamed)</p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm text-muted-foreground">Trigger output (streamed)</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    disabled={!triggerOutput.trim()}
+                    onClick={() => void playAssistantAudio("trigger-output", triggerOutput)}
+                  >
+                    {ttsLoadingId === "trigger-output"
+                      ? "Loading…"
+                      : ttsPlayingId === "trigger-output"
+                        ? "Stop"
+                        : "Play"}
+                  </Button>
+                </div>
                 <div className="min-h-[180px] resize-y overflow-y-auto rounded-lg border border-border bg-muted/30 p-3 font-mono text-sm">
                   {triggerOutput || "\u00a0"}
                 </div>

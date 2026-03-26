@@ -229,6 +229,7 @@ export function ScheduleSevenDayView({
                       ))}
                       {adCals.map((ev) => {
                         const cs = stylesForCalendarContext(ev.context);
+                        const isDeclined = ev.responseStatus === "declined";
                         return ev.htmlLink ? (
                           <a
                             key={ev.id}
@@ -238,7 +239,8 @@ export function ScheduleSevenDayView({
                             className={cn(
                               "truncate rounded border px-1 py-px text-[9px] font-medium",
                               cs.chip,
-                              cs.chipHover
+                              cs.chipHover,
+                              isDeclined && "opacity-50 line-through"
                             )}
                           >
                             {ev.title}
@@ -248,7 +250,8 @@ export function ScheduleSevenDayView({
                             key={ev.id}
                             className={cn(
                               "truncate rounded border px-1 py-px text-[9px] font-medium",
-                              cs.chip
+                              cs.chip,
+                              isDeclined && "opacity-50 line-through"
                             )}
                           >
                             {ev.title}

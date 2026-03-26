@@ -45,6 +45,9 @@ export function buildScheduleDayContextMarkdown(
       const dueLine =
         t.due?.datetime ?? t.due?.date ?? t.due_string ?? "—";
       md += `- **due / due_string:** ${dueLine}\n`;
+      if (t.duration) {
+        md += `- **duration:** ${t.duration.amount} ${t.duration.unit}\n`;
+      }
       if (t.description?.trim()) {
         md += `- **description:**\n\n${t.description}\n\n`;
       } else {
@@ -68,6 +71,7 @@ export function buildScheduleDayContextMarkdown(
       md += `- **context:** ${ev.context}\n`;
       md += `- **local segment:** ${formatLocalRange(it.start, it.end)}\n`;
       md += `- **allDay:** ${ev.allDay}\n`;
+      if (ev.responseStatus) md += `- **responseStatus:** ${ev.responseStatus}\n`;
       if (ev.htmlLink) md += `- **htmlLink:** ${ev.htmlLink}\n`;
       md += `\n`;
     }
@@ -84,6 +88,7 @@ export function buildScheduleDayContextMarkdown(
       md += `- **id:** \`${ev.id}\`\n`;
       md += `- **context:** ${ev.context}\n`;
       md += `- **start / end (API):** ${ev.start} → ${ev.end}\n`;
+      if (ev.responseStatus) md += `- **responseStatus:** ${ev.responseStatus}\n`;
       if (ev.htmlLink) md += `- **htmlLink:** ${ev.htmlLink}\n`;
       md += `\n`;
     }

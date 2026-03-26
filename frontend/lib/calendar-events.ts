@@ -9,6 +9,7 @@ export type CalendarEventDto = {
   start: string;
   end: string;
   htmlLink?: string;
+  responseStatus?: "accepted" | "declined" | "tentative" | "needsAction";
 };
 
 export type CalendarConfigured = {

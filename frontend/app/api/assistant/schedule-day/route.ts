@@ -19,6 +19,7 @@ function parseSseEvent(rawEvent: string): { event: string | null; data: unknown 
 }
 
 export async function POST(req: Request) {
+  const authHeader = req.headers.get("authorization");
   const payload = (await req.json()) as {
     message?: string;
     dateKey?: string;
@@ -35,7 +36,10 @@ export async function POST(req: Request) {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? process.env.BACKEND_URL ?? "http://localhost:3001";
   const backendRes = await fetch(`${backendUrl}/api/assistant/schedule-day`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(authHeader ? { Authorization: authHeader } : {}),
+    },
     body: JSON.stringify({
       message,
       dateKey,

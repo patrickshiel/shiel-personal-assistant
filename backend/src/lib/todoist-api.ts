@@ -84,13 +84,23 @@ export async function getTasks(
 /** POST /tasks */
 export async function addTask(
   token: string,
-  args: { content: string; project_id?: string; due_string?: string; priority?: number; description?: string }
+  args: {
+    content: string;
+    project_id?: string;
+    due_string?: string;
+    priority?: number;
+    description?: string;
+    duration?: number;
+    duration_unit?: "minute" | "day";
+  }
 ): Promise<unknown> {
   const body: Record<string, unknown> = { content: args.content };
   if (args.project_id != null) body.project_id = args.project_id;
   if (args.due_string != null) body.due_string = args.due_string;
   if (args.priority != null) body.priority = args.priority;
   if (args.description != null) body.description = args.description;
+  if (args.duration != null) body.duration = args.duration;
+  if (args.duration_unit != null) body.duration_unit = args.duration_unit;
   return request<unknown>("POST", "tasks", token, { body });
 }
 
@@ -98,13 +108,22 @@ export async function addTask(
 export async function updateTask(
   token: string,
   taskId: string,
-  args: { content?: string; due_string?: string; priority?: number; description?: string }
+  args: {
+    content?: string;
+    due_string?: string;
+    priority?: number;
+    description?: string;
+    duration?: number;
+    duration_unit?: "minute" | "day";
+  }
 ): Promise<unknown> {
   const body: Record<string, unknown> = {};
   if (args.content != null) body.content = args.content;
   if (args.due_string != null) body.due_string = args.due_string;
   if (args.priority != null) body.priority = args.priority;
   if (args.description != null) body.description = args.description;
+  if (args.duration != null) body.duration = args.duration;
+  if (args.duration_unit != null) body.duration_unit = args.duration_unit;
   if (Object.keys(body).length === 0) return undefined;
   return request<unknown>("POST", `tasks/${taskId}`, token, { body });
 }

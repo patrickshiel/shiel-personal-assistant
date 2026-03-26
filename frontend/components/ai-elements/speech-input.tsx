@@ -60,9 +60,11 @@ declare global {
 }
 
 type SpeechInputMode = "speech-recognition" | "media-recorder" | "none";
+const PREFERRED_SPEECH_MODE_STORAGE_KEY = "speech-input-preferred-mode";
 
 export type SpeechInputProps = ComponentProps<typeof Button> & {
   onTranscriptionChange?: (text: string) => void;
+  onSessionTranscription?: (text: string) => void;
   /**
    * Callback for when audio is recorded using MediaRecorder fallback.
    * This is called in browsers that don't support the Web Speech API (Firefox, Safari).
@@ -78,6 +80,15 @@ const detectSpeechInputMode = (): SpeechInputMode => {
     return "none";
   }
 
+  try {
+    const preferred = window.localStorage.getItem(PREFERRED_SPEECH_MODE_STORAGE_KEY);
+    if (preferred === "media-recorder" && canUseMediaRecorder()) {
+      return "media-recorder";
+    }
+  } catch {
+    // Ignore storage access failures (private mode / restricted storage).
+  }
+
   if ("SpeechRecognition" in window || "webkitSpeechRecognition" in window) {
     return "speech-recognition";
   }
@@ -89,16 +100,22 @@ const detectSpeechInputMode = (): SpeechInputMode => {
   return "none";
 };
 
+const canUseMediaRecorder = () =>
+  typeof window !== "undefined" &&
+  "MediaRecorder" in window &&
+  "mediaDevices" in navigator;
+
 export const SpeechInput = ({
   className,
   onTranscriptionChange,
+  onSessionTranscription,
   onAudioRecorded,
   lang = "en-US",
   ...props
 }: SpeechInputProps) => {
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [mode] = useState<SpeechInputMode>(detectSpeechInputMode);
+  const [mode, setMode] = useState<SpeechInputMode>(detectSpeechInputMode);
   const [isRecognitionReady, setIsRecognitionReady] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   /** True between start() and onend/onerror; avoids double start() before React state catches up. */
@@ -109,11 +126,18 @@ export const SpeechInput = ({
   const onTranscriptionChangeRef = useRef<
     SpeechInputProps["onTranscriptionChange"]
   >(onTranscriptionChange);
+  const onSessionTranscriptionRef = useRef<
+    SpeechInputProps["onSessionTranscription"]
+  >(onSessionTranscription);
   const onAudioRecordedRef =
     useRef<SpeechInputProps["onAudioRecorded"]>(onAudioRecorded);
+  const speechSessionTranscriptRef = useRef("");
+  const shouldEmitSessionOnEndRef = useRef(false);
+  const autoStartMediaFallbackRef = useRef(false);
 
   // Keep refs in sync
   onTranscriptionChangeRef.current = onTranscriptionChange;
+  onSessionTranscriptionRef.current = onSessionTranscription;
   onAudioRecordedRef.current = onAudioRecorded;
 
   // Initialize Speech Recognition when mode is speech-recognition
@@ -132,12 +156,22 @@ export const SpeechInput = ({
 
     const handleStart = () => {
       speechSessionActiveRef.current = true;
+      shouldEmitSessionOnEndRef.current = true;
+      speechSessionTranscriptRef.current = "";
       setIsListening(true);
     };
 
     const handleEnd = () => {
       speechSessionActiveRef.current = false;
       setIsListening(false);
+      if (shouldEmitSessionOnEndRef.current) {
+        const sessionTranscript = speechSessionTranscriptRef.current.trim();
+        if (sessionTranscript) {
+          onSessionTranscriptionRef.current?.(sessionTranscript);
+        }
+      }
+      shouldEmitSessionOnEndRef.current = false;
+      speechSessionTranscriptRef.current = "";
     };
 
     const handleResult = (event: Event) => {
@@ -156,15 +190,36 @@ export const SpeechInput = ({
       }
 
       if (finalTranscript) {
+        speechSessionTranscriptRef.current = `${speechSessionTranscriptRef.current} ${finalTranscript}`.trim();
         onTranscriptionChangeRef.current?.(finalTranscript);
       }
     };
 
     const handleError = (event: Event) => {
       speechSessionActiveRef.current = false;
+      shouldEmitSessionOnEndRef.current = false;
+      speechSessionTranscriptRef.current = "";
       setIsListening(false);
+      const err = event as SpeechRecognitionErrorEvent;
+      if (
+        (err.error === "network" ||
+          err.error === "audio-capture" ||
+          err.error === "not-allowed" ||
+          err.error === "service-not-allowed") &&
+        onAudioRecordedRef.current &&
+        canUseMediaRecorder()
+      ) {
+        // Arc can expose SpeechRecognition but fail immediately with errors like
+        // "network". Fall back to MediaRecorder + server transcription.
+        autoStartMediaFallbackRef.current = true;
+        try {
+          window.localStorage.setItem(PREFERRED_SPEECH_MODE_STORAGE_KEY, "media-recorder");
+        } catch {
+          /* ignore storage failures */
+        }
+        setMode("media-recorder");
+      }
       if (process.env.NODE_ENV === "development") {
-        const err = event as SpeechRecognitionErrorEvent;
         // Arc / Chromium: common values include not-allowed, aborted, network
         console.warn("[SpeechInput]", err.error ?? event.type);
       }
@@ -180,6 +235,8 @@ export const SpeechInput = ({
 
     return () => {
       speechSessionActiveRef.current = false;
+      shouldEmitSessionOnEndRef.current = false;
+      speechSessionTranscriptRef.current = "";
       speechRecognition.removeEventListener("start", handleStart);
       speechRecognition.removeEventListener("end", handleEnd);
       speechRecognition.removeEventListener("result", handleResult);
@@ -243,6 +300,7 @@ export const SpeechInput = ({
             const transcript = await onAudioRecordedRef.current(audioBlob);
             if (transcript) {
               onTranscriptionChangeRef.current?.(transcript);
+              onSessionTranscriptionRef.current?.(transcript);
             }
           } catch {
             // Error handling delegated to the onAudioRecorded caller
@@ -267,10 +325,21 @@ export const SpeechInput = ({
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start();
       setIsListening(true);
-    } catch {
+    } catch (err) {
       setIsListening(false);
+      if (process.env.NODE_ENV === "development") {
+        console.warn("[SpeechInput] media-recorder start failed", err);
+      }
     }
   }, []);
+
+  useEffect(() => {
+    if (mode !== "media-recorder" || !autoStartMediaFallbackRef.current) {
+      return;
+    }
+    autoStartMediaFallbackRef.current = false;
+    void startMediaRecorder();
+  }, [mode, startMediaRecorder]);
 
   // Stop MediaRecorder recording
   const stopMediaRecorder = useCallback(() => {

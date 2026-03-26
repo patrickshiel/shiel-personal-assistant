@@ -1,0 +1,21 @@
+{
+  "version": "52.0.0",
+  "files": {
+    "d8d4cdfb28d324127ea845fc0a867c8231e3c202cd9a44d7173e373705128c9f": {
+      "displayName": "ShielAssistantDevStack Template",
+      "source": {
+        "path": "ShielAssistantDevStack.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "current_account-eu-west-1-9c047bc2": {
+          "bucketName": "cdk-hnb659fds-assets-${AWS::AccountId}-eu-west-1",
+          "objectKey": "d8d4cdfb28d324127ea845fc0a867c8231e3c202cd9a44d7173e373705128c9f.json",
+          "region": "eu-west-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-hnb659fds-file-publishing-role-${AWS::AccountId}-eu-west-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

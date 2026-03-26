@@ -1,0 +1,436 @@
+{
+  "/ShielAssistantDevStack/JobsTable": [
+    {
+      "type": "aws:cdk:hasPhysicalName",
+      "data": {
+        "Ref": "JobsTable1970BC16"
+      }
+    }
+  ],
+  "/ShielAssistantDevStack/OrchestratorTable": [
+    {
+      "type": "aws:cdk:hasPhysicalName",
+      "data": {
+        "Ref": "OrchestratorTableA816CBA4"
+      }
+    }
+  ],
+  "/ShielAssistantDevStack/MemoryTable": [
+    {
+      "type": "aws:cdk:hasPhysicalName",
+      "data": {
+        "Ref": "MemoryTable77C28B76"
+      }
+    }
+  ],
+  "/ShielAssistantDevStack/BackendEcrRepositoryUri": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendEcrRepositoryUri"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendAlbDnsName": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendAlbDnsName"
+    }
+  ],
+  "/ShielAssistantDevStack/EcsClusterName": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EcsClusterName"
+    }
+  ],
+  "/ShielAssistantDevStack/EcsServiceName": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EcsServiceName"
+    }
+  ],
+  "/ShielAssistantDevStack/CognitoUserPoolId": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CognitoUserPoolId"
+    }
+  ],
+  "/ShielAssistantDevStack/CognitoAppClientId": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CognitoAppClientId"
+    }
+  ],
+  "/ShielAssistantDevStack/CognitoIssuer": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CognitoIssuer"
+    }
+  ],
+  "/ShielAssistantDevStack/JobsTableName": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "JobsTableName"
+    }
+  ],
+  "/ShielAssistantDevStack/OrchestratorTableName": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "OrchestratorTableName"
+    }
+  ],
+  "/ShielAssistantDevStack/MemoryTableName": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "MemoryTableName"
+    }
+  ],
+  "/ShielAssistantDevStack/ArtifactsBucketName": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ArtifactsBucketName"
+    }
+  ],
+  "/ShielAssistantDevStack/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    }
+  ],
+  "/ShielAssistantDevStack/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "Vpc8378EB38"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/IGW": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcIGWD7BA715C"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/VPCGW": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcVPCGWBF912B6E"
+    }
+  ],
+  "/ShielAssistantDevStack/EcsCluster/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EcsCluster97242B84"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendEcrRepository/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendEcrRepository00C0B380"
+    }
+  ],
+  "/ShielAssistantDevStack/JobsTable/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "JobsTable1970BC16"
+    }
+  ],
+  "/ShielAssistantDevStack/OrchestratorTable/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "OrchestratorTableA816CBA4"
+    }
+  ],
+  "/ShielAssistantDevStack/MemoryTable/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "MemoryTable77C28B76"
+    }
+  ],
+  "/ShielAssistantDevStack/ArtifactsBucket/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ArtifactsBucket2AAC5544"
+    }
+  ],
+  "/ShielAssistantDevStack/OpenAiApiKeySecret/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "OpenAiApiKeySecret05681F66"
+    }
+  ],
+  "/ShielAssistantDevStack/CognitoUserPool/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CognitoUserPool53E37E69"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/LoadBalancerDNS": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceLoadBalancerDNSE742582D"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/ServiceURL": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceServiceURLB1770053"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/Service": [
+    {
+      "type": "aws:cdk:warning",
+      "data": "minHealthyPercent has not been configured so the default value of 50% is used. The number of running tasks will decrease below the desired count during deployments etc. See https://github.com/aws/aws-cdk/issues/31705 [ack: @aws-cdk/aws-ecs:minHealthyPercent]",
+      "trace": [
+        "Annotations.addMessage (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2270)",
+        "Annotations.addWarningV2 (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/aws-cdk-lib/core/lib/annotations.js:1:984)",
+        "new BaseService2 (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/aws-cdk-lib/aws-ecs/lib/base/base-service.js:1:12546)",
+        "new FargateService2 (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/aws-cdk-lib/aws-ecs/lib/fargate/fargate-service.js:1:6556)",
+        "new FargateService2 (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/aws-cdk-lib/core/lib/prop-injectable.js:1:726)",
+        "new ApplicationLoadBalancedFargateService2 (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/aws-cdk-lib/aws-ecs-patterns/lib/fargate/application-load-balanced-fargate-service.js:1:6195)",
+        "new ApplicationLoadBalancedFargateService2 (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/aws-cdk-lib/core/lib/prop-injectable.js:1:726)",
+        "new DevAppStack (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/bin/dev-app.ts:136:28)",
+        "Object.<anonymous> (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/bin/dev-app.ts:239:1)",
+        "Module._compile (node:internal/modules/cjs/loader:1692:14)",
+        "Module.m._compile (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/ts-node/src/index.ts:1618:23)",
+        "node:internal/modules/cjs/loader:1824:10",
+        "Object.require.extensions.<computed> [as .ts] (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/ts-node/src/index.ts:1621:12)",
+        "Module.load (node:internal/modules/cjs/loader:1427:32)",
+        "Module._load (node:internal/modules/cjs/loader:1250:12)",
+        "TracingChannel.traceSync (node:diagnostics_channel:322:14)",
+        "wrapModuleLoad (node:internal/modules/cjs/loader:235:24)",
+        "Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:152:5)",
+        "phase4 (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/ts-node/src/bin.ts:649:14)",
+        "bootstrap (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/ts-node/src/bin.ts:95:10)",
+        "main (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/ts-node/src/bin.ts:55:10)",
+        "Object.<anonymous> (/Users/patrickshiel/Github/shiel/shiel-personal-assistant/infra/node_modules/ts-node/src/bin.ts:800:3)",
+        "Module._compile (node:internal/modules/cjs/loader:1692:14)",
+        "Object.<anonymous> (node:internal/modules/cjs/loader:1824:10)",
+        "Module.load (node:internal/modules/cjs/loader:1427:32)",
+        "Module._load (node:internal/modules/cjs/loader:1250:12)",
+        "TracingChannel.traceSync (node:diagnostics_channel:322:14)",
+        "wrapModuleLoad (node:internal/modules/cjs/loader:235:24)",
+        "Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:152:5)",
+        "node:internal/main/run_main_module:33:47"
+      ]
+    }
+  ],
+  "/ShielAssistantDevStack/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PublicSubnet1/Subnet": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPublicSubnet1Subnet5C2D37C4"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PublicSubnet1/RouteTable": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPublicSubnet1RouteTable6C95E38E"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PublicSubnet1/RouteTableAssociation": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPublicSubnet1RouteTableAssociation97140677"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PublicSubnet1/DefaultRoute": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPublicSubnet1DefaultRoute3DA9E72A"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PublicSubnet1/EIP": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPublicSubnet1EIPD7E02669"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PublicSubnet1/NATGateway": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPublicSubnet1NATGateway4D7517AA"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PublicSubnet2/Subnet": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPublicSubnet2Subnet691E08A3"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PublicSubnet2/RouteTable": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPublicSubnet2RouteTable94F7E489"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PublicSubnet2/RouteTableAssociation": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPublicSubnet2RouteTableAssociationDD5762D8"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PublicSubnet2/DefaultRoute": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPublicSubnet2DefaultRoute97F91067"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PrivateSubnet1/Subnet": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPrivateSubnet1Subnet536B997A"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PrivateSubnet1/RouteTable": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPrivateSubnet1RouteTableB2C5B500"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PrivateSubnet1/RouteTableAssociation": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPrivateSubnet1RouteTableAssociation70C59FA6"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PrivateSubnet1/DefaultRoute": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPrivateSubnet1DefaultRouteBE02A9ED"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PrivateSubnet2/Subnet": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPrivateSubnet2Subnet3788AAA1"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PrivateSubnet2/RouteTable": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPrivateSubnet2RouteTableA678073B"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PrivateSubnet2/RouteTableAssociation": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPrivateSubnet2RouteTableAssociationA89CAD56"
+    }
+  ],
+  "/ShielAssistantDevStack/Vpc/PrivateSubnet2/DefaultRoute": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcPrivateSubnet2DefaultRoute060D2087"
+    }
+  ],
+  "/ShielAssistantDevStack/ArtifactsBucket/Policy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ArtifactsBucketPolicy852CB646"
+    }
+  ],
+  "/ShielAssistantDevStack/CognitoUserPool/WebClient/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CognitoUserPoolWebClientEA0EBDA4"
+    }
+  ],
+  "/ShielAssistantDevStack/CognitoUserPool/HostedUiDomain/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CognitoUserPoolHostedUiDomainCB5A54F6"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/LB/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceLB09608E98"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceTaskDef9F97F56B"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendService2147DAF9"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/LB/SecurityGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceLBSecurityGroup2B9BA648"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/LB/SecurityGroup/to ShielAssistantDevStackBackendServiceSecurityGroupC486C901:3001": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceLBSecurityGrouptoShielAssistantDevStackBackendServiceSecurityGroupC486C9013001C3E2BD48"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/LB/PublicListener/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceLBPublicListener2FA7FC98"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceTaskDefTaskRoleD63B95BB"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceTaskDefExecutionRole15BE46B5"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/Service/SecurityGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceSecurityGroup7599F85E"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/Service/SecurityGroup/from ShielAssistantDevStackBackendServiceLBSecurityGroup5A51DF6A:3001": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceSecurityGroupfromShielAssistantDevStackBackendServiceLBSecurityGroup5A51DF6A30018B77D539"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/LB/PublicListener/ECSGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceLBPublicListenerECSGroupD43CD2AB"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/TaskDef/TaskRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceTaskDefTaskRoleDefaultPolicy3BCDB2C6"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/TaskDef/web/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceTaskDefwebLogGroup614D1BFF"
+    }
+  ],
+  "/ShielAssistantDevStack/BackendService/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BackendServiceTaskDefExecutionRoleDefaultPolicyDFB9BC56"
+    }
+  ]
+}

@@ -2,6 +2,8 @@ import { google } from "googleapis";
 
 export type CalendarContext = "personal" | "work";
 
+export type CalendarResponseStatus = "accepted" | "declined" | "tentative" | "needsAction";
+
 export type NormalizedCalendarEvent = {
   id: string;
   title: string;
@@ -12,6 +14,7 @@ export type NormalizedCalendarEvent = {
   /** ISO datetime or YYYY-MM-DD (exclusive end date for all-day per Google) */
   end: string;
   htmlLink?: string;
+  responseStatus?: CalendarResponseStatus;
 };
 
 function getOAuthClient(context: CalendarContext) {
@@ -62,9 +65,19 @@ export async function listPrimaryCalendarEvents(
   const items = res.data.items ?? [];
   const out: NormalizedCalendarEvent[] = [];
 
+  const VALID_RESPONSE_STATUSES = new Set<string>(["accepted", "declined", "tentative", "needsAction"]);
+
   for (const ev of items) {
     if (!ev.id) continue;
     const title = ev.summary?.trim() || "(No title)";
+
+    const selfAttendee = ev.attendees?.find((a) => a.self);
+    const rawStatus = selfAttendee?.responseStatus;
+    const responseStatus =
+      rawStatus && VALID_RESPONSE_STATUSES.has(rawStatus)
+        ? (rawStatus as CalendarResponseStatus)
+        : undefined;
+
     const allDay = Boolean(ev.start?.date && !ev.start?.dateTime);
     if (allDay) {
       const startDate = ev.start?.date;
@@ -78,6 +91,7 @@ export async function listPrimaryCalendarEvents(
         start: startDate,
         end: endDate,
         htmlLink: ev.htmlLink ?? undefined,
+        responseStatus,
       });
       continue;
     }
@@ -92,6 +106,7 @@ export async function listPrimaryCalendarEvents(
       start,
       end,
       htmlLink: ev.htmlLink ?? undefined,
+      responseStatus,
     });
   }
 

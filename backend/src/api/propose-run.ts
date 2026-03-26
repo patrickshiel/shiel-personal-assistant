@@ -72,8 +72,11 @@ function formatTaskForPrompt(task: TaskItem): string {
   const dueLine = due?.datetime
     ? `Due: ${dateStr} (datetime: ${due.datetime})`
     : `Due: ${dateStr} (date only; suggest adding a time when proposing due_string)`;
+  const durationLine = task.duration
+    ? `\nDuration: ${task.duration.amount} ${task.duration.unit}`
+    : "";
   const desc = task.description ? `\nDescription: ${task.description}` : "";
-  return `Task id: ${task.id}\nContent: ${task.content}\n${dueLine}\nPriority: ${task.priority}\nContext: ${task.context}${desc}`;
+  return `Task id: ${task.id}\nContent: ${task.content}\n${dueLine}${durationLine}\nPriority: ${task.priority}\nContext: ${task.context}${desc}`;
 }
 
 export async function proposeTaskRefinement(
@@ -101,6 +104,12 @@ function scheduleDayMemoryContext(dateKey: string, scheduleMarkdown: string): st
   return `The user is on the Schedule screen. The selected day is **${dateKey}** (local calendar).
 
 Below is the **complete** snapshot for that day. Use it to answer questions about that day. You may still use tools to **mutate** tasks or calendar, **save content to Obsidian**, or to fetch other days when needed.
+
+**Todoist tasks:** You have full access to Todoist tools and MUST use them when the user asks to reschedule, update, or complete tasks:
+- **todoist_update_task** — reschedule a task (change due_string), update content, priority, or description. Always pass the task's \`context\` (personal or work) and \`taskId\`.
+- **todoist_add_task** — create a new task. Always pass \`context\` and \`content\`.
+- **todoist_close_task** — mark a task as complete. Always pass \`context\` and \`taskId\`.
+When a calendar event has **responseStatus: declined**, treat that time slot as **available** for task scheduling. Do not say task updates are unsupported — they are fully supported. Call the tool and the user will see an Apply button.
 
 **Obsidian daily briefing:** When the user asks to save, brief, export, or put the rundown into a **daily note** (or similar), use **obsidian_write_note** or **obsidian_append_to_note** with markdown \`content\`. Prefer a path tied to this day: e.g. \`Daily/${dateKey}.md\` (relative to the vault; personal vault paths are auto-prefixed with \`Personal/\` by the tool). Use **context** \`personal\` or \`work\` to pick the vault. If the file may already exist, call **obsidian_read_note** first; if it exists and the user did not ask to replace it, use **obsidian_append_to_note** (e.g. a \`## Briefing\` section with a short timestamp) instead of overwriting.
 

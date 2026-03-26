@@ -12,6 +12,7 @@ export interface TaskItem {
   content: string;
   due_string?: string;
   due?: { date: string; datetime?: string; [k: string]: unknown };
+  duration?: { amount: number; unit: "minute" | "day" };
   priority: number;
   context: TaskContext;
   description?: string;
@@ -34,14 +35,30 @@ function parseListResult(raw: string): { tasks?: unknown[]; context?: TaskContex
 
 function toTaskItem(raw: unknown, context: TaskContext): TaskItem | null {
   if (!raw || (raw as any).id === undefined) return null;
-  const t = raw as { id: string | number; content?: string; due_string?: string; due?: { date: string; datetime?: string }; priority?: number; description?: string };
+  const t = raw as {
+    id: string | number;
+    content?: string;
+    due_string?: string;
+    due?: { date: string; datetime?: string };
+    duration?: { amount?: number; unit?: string };
+    priority?: number;
+    description?: string;
+  };
   const id = typeof t.id === "number" ? String(t.id) : t.id;
   if (typeof id !== "string") return null;
+  const durationUnit = t.duration?.unit;
+  const duration =
+    t.duration &&
+    typeof t.duration.amount === "number" &&
+    (durationUnit === "minute" || durationUnit === "day")
+      ? { amount: t.duration.amount, unit: durationUnit as "minute" | "day" }
+      : undefined;
   return {
     id,
     content: typeof t.content === "string" ? t.content : "",
     due_string: t.due_string,
     due: t.due,
+    duration,
     priority: typeof t.priority === "number" ? t.priority : 1,
     context,
     description: t.description,

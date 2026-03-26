@@ -115,16 +115,18 @@ export function TimedBlock({
 
   if (p.kind === "calendar" && p.event) {
     const ev = p.event;
+    const isDeclined = ev.responseStatus === "declined";
     const timeLabel = formatDateRange(new Date(ev.start), new Date(ev.end));
     const cs = stylesForCalendarContext(ev.context);
     const shell = cn(
       "absolute z-[1] overflow-hidden rounded border px-0.5 py-0.5 text-left text-[10px] leading-tight",
-      cs.timedShell
+      cs.timedShell,
+      isDeclined && "opacity-50"
     );
 
     const inner = (
       <>
-        <div className="line-clamp-2 font-medium">{ev.title}</div>
+        <div className={cn("line-clamp-2 font-medium", isDeclined && "line-through")}>{ev.title}</div>
         <div className="text-muted-foreground mt-0.5 truncate text-[9px]">
           {ev.context} · {timeLabel}
         </div>

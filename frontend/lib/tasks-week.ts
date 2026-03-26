@@ -5,6 +5,7 @@ export type WeekCalendarTask = {
   content: string;
   due_string?: string;
   due?: { date: string; datetime?: string; string?: string };
+  duration?: { amount: number; unit: "minute" | "day" };
 };
 
 export type WeekCalendarTasksData = {
@@ -170,18 +171,22 @@ export function isDateInLocalWeek(date: Date, weekStart: Date, weekEnd: Date): b
   return t >= t0 && t <= t1;
 }
 
-/** Range for list display; timed tasks use parsed instant + 1h window; date-only uses local day bounds. */
+/** Range for list display; timed tasks use parsed instant + duration (default 60m); date-only uses local day bounds. */
 export function taskDueRange(task: WeekCalendarTask): { from: Date; to: Date } | null {
   const due = task.due;
   const dateStr = due?.date ?? task.due_string ?? "";
   if (!dateStr) return null;
   const dateOnly = dateStr.slice(0, 10);
   const datetime = due && "datetime" in due ? (due as { datetime?: string }).datetime : undefined;
+  const durationMinutes =
+    task.duration && task.duration.unit === "minute" && Number.isFinite(task.duration.amount)
+      ? Math.max(1, Math.floor(task.duration.amount))
+      : 60;
   if (datetime) {
     try {
       const from = new Date(datetime);
       if (!Number.isNaN(from.getTime())) {
-        return { from, to: new Date(from.getTime() + 60 * 60 * 1000) };
+        return { from, to: new Date(from.getTime() + durationMinutes * 60 * 1000) };
       }
     } catch {
       /* fall through */
@@ -194,7 +199,7 @@ export function taskDueRange(task: WeekCalendarTask): { from: Date; to: Date } |
     try {
       const from = new Date(strToParse);
       if (!Number.isNaN(from.getTime())) {
-        return { from, to: new Date(from.getTime() + 60 * 60 * 1000) };
+        return { from, to: new Date(from.getTime() + durationMinutes * 60 * 1000) };
       }
     } catch {
       /* fall through */

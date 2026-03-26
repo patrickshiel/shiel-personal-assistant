@@ -1,0 +1,12 @@
+{
+  "app": "npx ts-node --project tsconfig.json bin/dev-app.ts",
+  "context": {
+    "projectName": "shiel-assistant",
+    "environmentName": "dev",
+    "enableAmplify": false,
+    "amplifyRepository": "",
+    "amplifyOauthTokenSecretArn": "",
+    "amplifyBranchName": "main",
+    "allowedCorsOrigins": "http://localhost:3002"
+  }
+}

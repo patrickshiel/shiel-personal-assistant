@@ -65,6 +65,18 @@ export const addTaskSchema = z.object({
   dueString: z.string().nullable().optional().describe("Due date and optionally time. Use specific datetime for prep tasks, e.g. '2025-11-12 09:00' or 'Nov 12 2025 9:00 AM'. Natural: 'today', 'tomorrow'."),
   priority: z.number().min(1).max(4).nullable().optional(),
   description: z.string().nullable().optional().describe("Task description. For prep tasks include meeting name, meeting date/time, and what the prep is for."),
+  duration: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .optional()
+    .describe("Estimated task duration amount (use with durationUnit)."),
+  durationUnit: z
+    .enum(["minute", "day"])
+    .nullable()
+    .optional()
+    .describe("Unit for duration: minute or day."),
 });
 
 export const updateTaskSchema = z.object({
@@ -74,6 +86,18 @@ export const updateTaskSchema = z.object({
   dueString: z.string().nullable().optional(),
   priority: z.number().min(1).max(4).nullable().optional(),
   description: z.string().max(10000).nullable().optional().describe("Task description (markdown supported)."),
+  duration: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .optional()
+    .describe("Estimated task duration amount (use with durationUnit)."),
+  durationUnit: z
+    .enum(["minute", "day"])
+    .nullable()
+    .optional()
+    .describe("Unit for duration: minute or day."),
 });
 
 export const closeTaskSchema = z.object({
@@ -131,6 +155,8 @@ export async function addTask(input: AddTaskInput): Promise<string> {
       due_string: input.dueString ?? undefined,
       priority: input.priority ?? undefined,
       description: input.description ?? undefined,
+      duration: input.duration ?? undefined,
+      duration_unit: input.durationUnit ?? undefined,
     });
     return JSON.stringify({ context: ctx, ...(task as object) });
   } catch (e) {
@@ -155,6 +181,8 @@ export async function updateTask(input: UpdateTaskInput): Promise<string> {
       due_string: input.dueString ?? undefined,
       priority: input.priority ?? undefined,
       description,
+      duration: input.duration ?? undefined,
+      duration_unit: input.durationUnit ?? undefined,
     });
     return JSON.stringify({ success: true });
   } catch (e) {

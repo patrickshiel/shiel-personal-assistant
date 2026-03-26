@@ -19,6 +19,7 @@ function parseSseEvent(rawEvent: string): { event: string | null; data: unknown 
 }
 
 export async function POST(req: Request) {
+  const authHeader = req.headers.get("authorization");
   const payload = (await req.json()) as { messages?: { role: string; content: string }[]; message?: string };
   const messages = payload.messages ?? [];
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
@@ -28,7 +29,10 @@ export async function POST(req: Request) {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? process.env.BACKEND_URL ?? "http://localhost:3001";
   const backendRes = await fetch(`${backendUrl}/api/assistant/propose`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(authHeader ? { Authorization: authHeader } : {}),
+    },
     body: JSON.stringify({ message }),
   });
 
