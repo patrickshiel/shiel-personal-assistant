@@ -1,5 +1,26 @@
 import { createTextStreamResponse } from "ai";
 
+function parseBackendErrorMessage(rawText: string): string {
+  const text = rawText.trim();
+  if (!text) return "Backend error";
+  try {
+    const parsed = JSON.parse(text) as {
+      error?: string | { fieldErrors?: Record<string, string[]>; formErrors?: string[]; message?: string };
+    };
+    if (typeof parsed.error === "string" && parsed.error.trim()) return parsed.error.trim();
+    if (parsed.error && typeof parsed.error === "object") {
+      const messageField = parsed.error.fieldErrors?.message?.[0];
+      if (typeof messageField === "string" && messageField.trim()) return messageField.trim();
+      const formError = parsed.error.formErrors?.[0];
+      if (typeof formError === "string" && formError.trim()) return formError.trim();
+      if (typeof parsed.error.message === "string" && parsed.error.message.trim()) return parsed.error.message.trim();
+    }
+  } catch {
+    // Non-JSON backend error payload.
+  }
+  return text;
+}
+
 function parseSseEvent(rawEvent: string): { event: string | null; data: unknown } {
   const lines = rawEvent.split("\n").map((l) => l.trimEnd());
   let event: string | null = null;
@@ -38,7 +59,7 @@ export async function POST(req: Request) {
 
   if (!backendRes.ok) {
     const text = await backendRes.text().catch(() => "");
-    return new Response(text || "Backend error", { status: backendRes.status });
+    return new Response(parseBackendErrorMessage(text), { status: backendRes.status });
   }
 
   const body = backendRes.body;

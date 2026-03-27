@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -2677,14 +2677,21 @@ export default function HomePage() {
                           e.preventDefault();
                           void runScheduleDayAssistant();
                         }}
-                        className="flex shrink-0 gap-2"
+                        className="flex shrink-0 items-end gap-2"
                       >
-                        <Input
+                        <textarea
                           value={scheduleChatInput}
                           onChange={(e) => setScheduleChatInput(e.target.value)}
+                          onKeyDown={(e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+                            if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+                            e.preventDefault();
+                            if (scheduleChatRunning || !scheduleChatInput.trim()) return;
+                            void runScheduleDayAssistant();
+                          }}
                           placeholder="Ask about tasks or events on this day…"
-                          className="min-w-0 flex-1 bg-background"
+                          className="min-h-[4.5rem] max-h-40 min-w-0 flex-1 resize-none overflow-y-auto rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
                           disabled={scheduleChatRunning}
+                          rows={3}
                         />
                         <SpeechInput
                           onTranscriptionChange={(text) =>
@@ -2812,10 +2819,16 @@ export default function HomePage() {
                     <textarea
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+                        if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+                        e.preventDefault();
+                        if (chatRunning || !chatInput.trim()) return;
+                        runAssistantPropose().catch(() => null);
+                      }}
                       disabled={chatRunning}
                       placeholder='Ask: "What tasks are due today?"'
-                      className="min-h-[52px] w-full resize-none rounded-lg border border-input bg-background px-4 py-3 pr-24 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                      rows={1}
+                      className="min-h-[4.5rem] max-h-40 w-full resize-none overflow-y-auto rounded-lg border border-input bg-background px-4 py-3 pr-24 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      rows={3}
                     />
                     <SpeechInput
                       onTranscriptionChange={(text) => setChatInput((prev) => (prev ? `${prev} ${text}` : text))}

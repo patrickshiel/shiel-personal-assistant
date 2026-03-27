@@ -69,18 +69,18 @@ async function sseStreamText(res: express.Response, eventPrefix: string, text: s
 }
 
 const proposeAssistantBody = z.object({
-  message: z.string().min(1).max(20000),
+  message: z.string().min(1).max(100_000),
 });
 
 const scheduleDayAssistantBody = z.object({
-  message: z.string().min(1).max(20000),
+  message: z.string().min(1).max(100_000),
   dateKey: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   scheduleMarkdown: z.string().min(1).max(120_000),
   history: z
     .array(
       z.object({
         role: z.enum(["user", "assistant"]),
-        content: z.string().max(32_000),
+        content: z.string().max(100_000),
       })
     )
     .max(40)
@@ -101,7 +101,7 @@ const assistantTtsBody = z.object({
 });
 
 const proposeTriggerBody = z.object({
-  inputOverride: z.string().min(1).max(20000).optional(),
+  inputOverride: z.string().min(1).max(100_000).optional(),
 });
 
 const executeJobBody = z.object({
@@ -189,7 +189,7 @@ const taskRefineBody = z.object({
     context: z.enum(["personal", "work"]),
     description: z.string().optional(),
   }),
-  message: z.string().min(1).max(20000),
+  message: z.string().min(1).max(100_000),
   history: z
     .array(z.object({ role: z.enum(["human", "ai"]), content: z.string() }))
     .max(50)
