@@ -119,10 +119,10 @@ const debriefProposeBody = z.object({
 
 const taskUpdateBody = z.object({
   context: z.enum(["personal", "work"]).optional(),
-  content: z.string().min(1).max(10000).optional(),
+  content: z.string().min(1).max(500_000).optional(),
   dueString: z.string().max(200).optional(),
   priority: z.number().min(1).max(4).optional(),
-  description: z.string().max(10000).optional(),
+  description: z.string().max(500_000).optional(),
   duration: z.number().int().positive().optional(),
   durationUnit: z.enum(["minute", "day"]).optional(),
 });
@@ -133,10 +133,10 @@ const taskCloseBody = z.object({
 
 const taskCreateBody = z.object({
   context: z.enum(["personal", "work"]),
-  content: z.string().min(1).max(10000),
+  content: z.string().min(1).max(500_000),
   dueString: z.string().max(200).optional(),
   priority: z.number().min(1).max(4).optional(),
-  description: z.string().max(10000).optional(),
+  description: z.string().max(500_000).optional(),
   duration: z.number().int().positive().optional(),
   durationUnit: z.enum(["minute", "day"]).optional(),
 });

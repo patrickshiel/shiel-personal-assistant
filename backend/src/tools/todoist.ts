@@ -60,11 +60,11 @@ export const listTasksSchema = z.object({
 
 export const addTaskSchema = z.object({
   context: contextSchema,
-  content: z.string(),
+  content: z.string().max(500_000),
   projectId: z.string().nullable().optional(),
   dueString: z.string().nullable().optional().describe("Due date and optionally time. Use specific datetime for prep tasks, e.g. '2025-11-12 09:00' or 'Nov 12 2025 9:00 AM'. Natural: 'today', 'tomorrow'."),
   priority: z.number().min(1).max(4).nullable().optional(),
-  description: z.string().nullable().optional().describe("Task description. For prep tasks include meeting name, meeting date/time, and what the prep is for."),
+  description: z.string().max(500_000).nullable().optional().describe("Task description. For prep tasks include meeting name, meeting date/time, and what the prep is for."),
   duration: z
     .number()
     .int()
@@ -82,10 +82,10 @@ export const addTaskSchema = z.object({
 export const updateTaskSchema = z.object({
   context: contextSchema,
   taskId: z.string(),
-  content: z.string().nullable().optional(),
+  content: z.string().max(500_000).nullable().optional(),
   dueString: z.string().nullable().optional(),
   priority: z.number().min(1).max(4).nullable().optional(),
-  description: z.string().max(10000).nullable().optional().describe("Task description (markdown supported)."),
+  description: z.string().max(500_000).nullable().optional().describe("Task description (markdown supported)."),
   duration: z
     .number()
     .int()

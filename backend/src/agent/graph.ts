@@ -18,10 +18,12 @@ import { ChatOpenAI } from "@langchain/openai";
 import { assistantToolsExecute, makeAssistantTools, type AgentMode, type ProposalCollector } from "./tools.js";
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
+const OPENAI_REASONING_EFFORT = (process.env.OPENAI_REASONING_EFFORT ?? "low") as "low" | "medium" | "high";
 
 const model = new ChatOpenAI({
   model: OPENAI_MODEL,
   temperature: 0,
+  reasoningEffort: OPENAI_REASONING_EFFORT,
 });
 
 export const DEFAULT_SYSTEM_PROMPT = `You are a personal assistant that organises the user's whole life. You manage two contexts:

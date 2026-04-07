@@ -203,6 +203,21 @@ function formatDueForDisplay(task: TaskItem): string {
   return dateStr;
 }
 
+function formatDueForTaskList(task: TaskItem): string {
+  const dateStr = task.due?.date ?? task.due_string ?? "";
+  if (!dateStr) return "—";
+  const dateOnly = dateStr.slice(0, 10);
+  const d = new Date(`${dateOnly}T12:00:00`);
+  if (!Number.isNaN(d.getTime())) {
+    return d.toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  }
+  return dateOnly;
+}
+
 function dueDateOnly(task: TaskItem): string {
   const d = task.due?.date ?? task.due_string ?? "";
   if (!d) return "";
@@ -504,6 +519,55 @@ function parseTaskDurationFromRaw(
   if (!unit || !Number.isFinite(amount ?? NaN)) return undefined;
   const intAmount = Math.max(1, Math.floor(amount as number));
   return { amount: intAmount, unit };
+}
+
+function errorMessageFromApiError(error: unknown, fallback: string): string {
+  if (typeof error === "string" && error.trim()) return error.trim();
+  if (!error || typeof error !== "object") return fallback;
+
+  const payload = error as {
+    message?: unknown;
+    formErrors?: unknown;
+    fieldErrors?: Record<string, unknown>;
+  };
+
+  if (typeof payload.message === "string" && payload.message.trim()) {
+    return payload.message.trim();
+  }
+
+  if (Array.isArray(payload.formErrors)) {
+    const firstFormError = payload.formErrors.find(
+      (value): value is string => typeof value === "string" && value.trim().length > 0
+    );
+    if (firstFormError) return firstFormError.trim();
+  }
+
+  const fieldErrors = payload.fieldErrors;
+  if (fieldErrors && typeof fieldErrors === "object") {
+    for (const value of Object.values(fieldErrors)) {
+      if (Array.isArray(value)) {
+        const firstFieldError = value.find(
+          (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
+        );
+        if (firstFieldError) return firstFieldError.trim();
+      }
+    }
+  }
+
+  return fallback;
+}
+
+function errorMessageFromResponseText(rawText: string, fallback: string): string {
+  const text = rawText.trim();
+  if (!text) return fallback;
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown; message?: unknown };
+    if (parsed.error !== undefined) return errorMessageFromApiError(parsed.error, fallback);
+    if (typeof parsed.message === "string" && parsed.message.trim()) return parsed.message.trim();
+  } catch {
+    // Non-JSON response; use plain text below.
+  }
+  return text;
 }
 
 export default function HomePage() {
@@ -813,7 +877,7 @@ export default function HomePage() {
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) {
-        setTaskActionError(json.error ?? "Update failed");
+        setTaskActionError(errorMessageFromApiError(json.error, "Update failed"));
         return;
       }
       if (!options?.keepEditing) {
@@ -853,7 +917,7 @@ export default function HomePage() {
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) {
-        setTaskActionError(json.error ?? "Update failed");
+        setTaskActionError(errorMessageFromApiError(json.error, "Update failed"));
         return;
       }
       await refreshTasks();
@@ -937,7 +1001,7 @@ export default function HomePage() {
         description?: string;
       };
       if (!res.ok) {
-        setTaskActionError(json.error ?? "Could not create task");
+        setTaskActionError(errorMessageFromApiError(json.error, "Could not create task"));
         return;
       }
       const id = json.id != null ? String(json.id) : null;
@@ -974,7 +1038,7 @@ export default function HomePage() {
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) {
-        setTaskActionError(json.error ?? "Complete failed");
+        setTaskActionError(errorMessageFromApiError(json.error, "Complete failed"));
         return;
       }
       await refreshTasks();
@@ -1199,7 +1263,7 @@ export default function HomePage() {
     });
     const json = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
     if (!res.ok) {
-      throw new Error(json.error ?? `Transcription failed: ${res.status}`);
+      throw new Error(errorMessageFromApiError(json.error, `Transcription failed: ${res.status}`));
     }
     if (!json.text) throw new Error("Empty transcription result");
     return json.text;
@@ -1234,7 +1298,7 @@ export default function HomePage() {
     });
     if (!res.ok) {
       const json = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(json.error ?? `TTS failed: ${res.status}`);
+      throw new Error(errorMessageFromApiError(json.error, `TTS failed: ${res.status}`));
     }
     return res.blob();
   }, [ttsSpeed, ttsVoice]);
@@ -1338,7 +1402,7 @@ export default function HomePage() {
         /* non-JSON body */
       }
       if (!res.ok) {
-        throw new Error(json.error ?? (await res.text().catch(() => "Obsidian request failed")));
+        throw new Error(errorMessageFromApiError(json.error, await res.text().catch(() => "Obsidian request failed")));
       }
       if (json.error) throw new Error(json.error);
       opts.onSuccess();
@@ -1388,7 +1452,7 @@ export default function HomePage() {
         } catch {
           /* empty */
         }
-        if (!res.ok) throw new Error(json.error ?? "Calendar create failed");
+        if (!res.ok) throw new Error(errorMessageFromApiError(json.error, "Calendar create failed"));
         opts.onSuccess();
         await opts.refreshCalendar?.();
         return;
@@ -1425,7 +1489,7 @@ export default function HomePage() {
         } catch {
           /* empty */
         }
-        if (!res.ok) throw new Error(json.error ?? "Calendar update failed");
+        if (!res.ok) throw new Error(errorMessageFromApiError(json.error, "Calendar update failed"));
         opts.onSuccess();
         await opts.refreshCalendar?.();
         return;
@@ -1528,7 +1592,7 @@ export default function HomePage() {
           body: JSON.stringify({ context }),
         });
         const json = (await res.json()) as { error?: string };
-        if (!res.ok) throw new Error(json.error ?? "Complete failed");
+        if (!res.ok) throw new Error(errorMessageFromApiError(json.error, "Complete failed"));
         setScheduleChatProposals((prev) => prev.filter((x) => x.id !== p.id));
         await refreshTasks();
         return;
@@ -1560,7 +1624,7 @@ export default function HomePage() {
           }),
         });
         const json = (await res.json()) as { error?: string };
-        if (!res.ok) throw new Error(json.error ?? "Create failed");
+        if (!res.ok) throw new Error(errorMessageFromApiError(json.error, "Create failed"));
         setScheduleChatProposals((prev) => prev.filter((x) => x.id !== p.id));
         await refreshTasks();
         return;
@@ -1590,7 +1654,27 @@ export default function HomePage() {
 
   const sendRefineMessage = async (messageOverride?: string) => {
     const message = (messageOverride ?? refineInput.trim()).trim();
-    if (!message || !selectedTask) return;
+    if (!message) return;
+
+    const taskForRefine = selectedTask
+      ? {
+          id: selectedTask.id,
+          content: selectedTask.content,
+          due_string: selectedTask.due_string,
+          due: selectedTask.due,
+          duration: selectedTask.duration,
+          priority: selectedTask.priority,
+          context: selectedTask.context,
+          description: selectedTask.description,
+        }
+      : null;
+    if (!taskForRefine) {
+      setRefineMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "Select a task first, then ask me to refine it." },
+      ]);
+      return;
+    }
 
     setRefineMessages((prev) => [...prev, { role: "user", content: message }]);
     setRefineRunning(true);
@@ -1606,11 +1690,11 @@ export default function HomePage() {
       const res = await authedFetch(`${backendUrl}/api/tasks/refine`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task: selectedTask, message, history }),
+        body: JSON.stringify({ task: taskForRefine, message, history }),
       });
       if (!res.ok) {
         const err = await res.text().catch(() => "");
-        throw new Error(err || `Refine failed: ${res.status}`);
+        throw new Error(errorMessageFromResponseText(err, `Refine failed: ${res.status}`));
       }
       if (!res.body) throw new Error("No response body");
 
@@ -1809,7 +1893,7 @@ export default function HomePage() {
         </div>
       );
     }
-    const dueLabel = formatDueForDisplay(task);
+    const dueLabel = formatDueForTaskList(task);
     const isSelected = selectedTask?.id === task.id && selectedTask?.context === task.context;
     return (
       <div
